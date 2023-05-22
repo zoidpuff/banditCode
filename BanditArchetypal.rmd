@@ -1,0 +1,187 @@
+---
+title: "Bandit Archetypal Analysis"
+output: github_document
+---
+
+Read in the data and store it as a data frame
+
+```{r setup, include=FALSE}
+
+library(rhdf5)
+library(tidyverse)
+library(ggplot2)
+library(archetypes)
+
+```
+
+
+```{r helper functions}
+# Load helper functions
+source("banditAnalysis.r")
+
+```
+
+```{r read data}
+# Set the path to the hdf5 file
+datafile <- '/home/gummi/banditExperiment/dataset.data'
+
+# Load the hdf5 file
+data <- h5dump(datafile,load=TRUE)
+
+# Compute experiment stats
+experimentData <- tabulateExperiments(data,datafile,2)
+
+TesmerFeatures <- c("ProbOfChoosing_0.25",
+                  "ProbOfChoosing_0.5",
+                  "ProbOfChoosing_1",
+                  "banditChoiceProb_0.25>1",
+                  "banditChoiceProb_1>0.5",
+                  "banditChoiceProb_0.5>1",
+                  "ProbOfCircle")
+
+
+```
+
+```{r prepare Data frame}
+collapsedSecondHalf <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] %>% 
+                        averageReplicates() %>%
+                        select(all_of(TesmerFeatures))
+
+collapsedSecondHalfincl <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] %>% 
+                        averageReplicates()
+```
+
+Do iterative archetypal analysis with the arhcetypal R package
+
+```{r try Archetypal Analysis}
+
+arhcetypal <- stepArchetypes(data = collapsedSecondHalf, 
+                         k = 1:10, 
+                         minImprovement = 0.000001,
+                         verbose = TRUE,
+                         nrep = 50)
+
+bestArchetypes <- bestModel(arhcetypal)
+#pheatmap::pheatmap(rss(arhcetypal),
+#                    cluster_rows = FALSE,
+#                    cluster_cols = FALSE)
+
+# Plot the screeplot of the archetypal analysis (RSS as a function of number of archetypes)
+screeplot(arhcetypal)
+
+```
+
+
+```{r plot Archetypal Analysis}
+
+
+
+# Create a mapping from State to color
+stateToColor <- c("Fasted" = "red", "FastedAlm" = "blue", "FastedVeh" = "green", "Fed" = "yellow")
+# Get vector of colors
+colors <- stateToColor[as.character(collapsedSecondHalfincl$State)]
+
+# Plot the archetypes in ternary plot
+
+ternPlotData <- as.data.frame(coef(bestArchetypes[[3]],'alphas'))
+
+
+#vcd::ternaryplot(coef(bestArchetypes[[3]], 'alphas'), col = colors,dimnames = c("One","Two","Three"))
+ggtern::ggtern(data = ternPlotData,
+               ggtern::aes(x = V1, y = V2, z = V3, color = as.character(collapsedSecondHalfincl$State))) + 
+  geom_point(size=4) + 
+  ggtern::theme_rgbw() +
+  guides(color = guide_legend(title = "State")) +
+  labs(x = "One", y = "Two", z = "Three") + 
+  ggtern::theme_zoom_center(x = 1.01)
+
+
+
+# Print the archetypes to console
+t(parameters(bestArchetypes[[3]]))
+
+# Plot the archetypes as barplots
+barplot(bestArchetypes[[3]], collapsedSecondHalf, percentiles = TRUE)
+```
+
+
+
+# Create a function for doing archetypal Analysis with predefined archetypes
+
+```{r try Archetypal Analysis with predefined archetypes}
+
+
+archtypesGridSearch <- function(archeMat, resolution = 1000, data) {
+  
+    tarcheMat <- t(archeMat)
+    alphas <- matrix(0,nrow = ncol(tarcheMat), ncol = nrow(data))
+
+    heatPlots <- list()
+
+    matrixList <- list()
+    for(i in seq(0, 1, by = resolution)) {
+        if(i == 1) {j_seq <- c(0)} else {
+            j_seq <- round(seq(0, 1-i, by = resolution), 7)
+        }
+        k_seq <- round((1 - i - j_seq), 7)
+        matrixList[[as.character(i)]] <- matrix(c(rep(i,length(j_seq)), j_seq, k_seq), ncol = 3)
+    }
+    allcombs <- do.call(rbind, matrixList)
+
+    for(d in 1:nrow(data) ){
+        dataPoint <-  data[d,]
+        Aprox <-  tarcheMat %*% t(allcombs)
+        ers <- colSums((sweep(Aprox, 1, t(dataPoint), "-"))^2)
+        minError <- min(ers)
+        currBest <- allcombs[which.min(ers),]
+        alphas[,d] <- currBest
+        
+        heatmapPrim <- cbind(allcombs[,1:2],ers)
+        colnames(heatmapPrim) <- c("Circle","GO","Error")
+        heatmapPrim <- as.data.frame(heatmapPrim)
+        # Use pivot_wider to make the data frame wide
+        #heatmapPrimWide <- heatmapPrim %>% 
+         #                   as.data.frame() %>%
+          #              pivot_wider(names_from = c("Circle"), values_from = "Error")
+
+
+        
+        heatPlots[[d]] <- ggplot(heatmapPrim,aes(x = Circle, y = GO, fill = Error)) +
+                            geom_tile() + 
+                            scale_fill_gradient(low = "#075AFF", high = "#FF0000") +
+                            scale_x_continuous(breaks = NULL) +
+                            scale_y_continuous(breaks = NULL) + 
+                            theme_minimal() +
+                            coord_fixed()
+
+
+    }
+    return(list(alphas,heatPlots))
+}
+
+
+```
+
+
+```{r try Archetypal Analysis with predefined archetypes}
+#"ProbOfChoosing_0.25","ProbOfChoosing_0.5","ProbOfChoosing_1","banditChoiceProb_0.25>1","banditChoiceProb_1>0.5","banditChoiceProb_0.5>1",","ProbOfCircle
+archMat <- matrix(c(1/3, 1/3, 1/3, 0.5, 0.5, 0.5, 1,
+    	            0,   0.5, 0.5, 1,   1,   1,   0,
+                    0.5, 0.5, 0,   0,   0,   0,   0), nrow = 3,
+                                                     ncol = 7, 
+                                                     byrow = TRUE,
+                                                    dimnames = list( c("Circle","GO","Uncertainty"),
+                                                    TesmerFeatures))           
+
+
+archeTypes <- archtypesGridSearch(archMat,1000,collapsedSecondHalf)
+    
+```
+
+```{r plot Archetypal Analysis with predefined archetypes}
+
+
+# Create a mapping from State to color
+vcd::ternaryplot(t(archeTypes), col = colors,dimnames = c("Circle","GO","Uncertainty"))
+
+```
