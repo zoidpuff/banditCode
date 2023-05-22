@@ -19,6 +19,33 @@ library(archetypes)
 # Load helper functions
 source("banditAnalysis.r")
 
+
+plotTernaryWithArrows <- function(alphasThree, Grouplabels, mappingVec,FilterVec,zoom,colVar){
+    # Create a vector which contains the opposite state for each state
+    experimentalGroupings <- paste0(Grouplabels$Mouse,
+                                    mappingVec[as.character(Grouplabels$State)])
+    
+    filtInds <- which(mappingVec[as.character(Grouplabels$State)] %in% FilterVec)
+    varNames <- colnames(alphasThree)
+
+    p <- ggtern::ggtern(data = alphasThree[filtInds,],
+                aes_string(x = varNames[1], y = varNames[2], z = varNames[3],
+                            color = paste0("as.character(collapsedSecondHalfincl$",colVar,")[filtInds]"),
+                            group = "experimentalGroupings[filtInds]")) + 
+                geom_point(size=3) + 
+                geom_line(arrow = arrow(length=unit(0.3,"cm"),
+                            ends="both", type = "open"),
+                            color = "#000000",
+                            alpha=0.2) +
+                ggtern::theme_rgbw() +
+                guides(color = guide_legend(title = colVar)) +
+                labs(x = varNames[1], y = varNames[2], z = varNames[3],) + 
+                ggtern::theme_zoom_center(x = zoom)
+    return(p)
+  }
+
+
+
 ```
 
 ```{r read data}
@@ -46,6 +73,13 @@ TesmerFeatures <- c("ProbOfChoosing_0.25",
 collapsedSecondHalf <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] %>% 
                         averageReplicates() %>%
                         select(all_of(TesmerFeatures))
+                        # Sort dataframe so that the states are in the same order
+                        %>% arrange(State)	
+
+collapsedSecondHalfTrials <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] %>% 
+                        averageReplicates() %>%
+                        select(all_of(c(TesmerFeatures,"numberOfTrials"))) 
+
 
 collapsedSecondHalfincl <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] %>% 
                         averageReplicates()
@@ -55,7 +89,7 @@ Do iterative archetypal analysis with the arhcetypal R package
 
 ```{r try Archetypal Analysis}
 
-arhcetypal <- stepArchetypes(data = collapsedSecondHalf, 
+arhcetypal <- stepArchetypes(data = collapsedSecondHalfTrials, 
                          k = 1:10, 
                          minImprovement = 0.000001,
                          verbose = TRUE,
@@ -66,7 +100,7 @@ bestArchetypes <- bestModel(arhcetypal)
 #                    cluster_rows = FALSE,
 #                    cluster_cols = FALSE)
 
-# Plot the screeplot of the archetypal analysis (RSS as a function of number of archetypes)
+# Plot the scree plot of the archetypal analysis (RSS as a function of number of archetypes)
 screeplot(arhcetypal)
 
 ```
@@ -75,33 +109,20 @@ screeplot(arhcetypal)
 ```{r plot Archetypal Analysis}
 
 
-
-# Create a mapping from State to color
-stateToColor <- c("Fasted" = "red", "FastedAlm" = "blue", "FastedVeh" = "green", "Fed" = "yellow")
-# Get vector of colors
-colors <- stateToColor[as.character(collapsedSecondHalfincl$State)]
-
-# Plot the archetypes in ternary plot
-
 ternPlotData <- as.data.frame(coef(bestArchetypes[[3]],'alphas'))
+colnames(ternPlotData) <- c("One","Two","Three")
 
-
-#vcd::ternaryplot(coef(bestArchetypes[[3]], 'alphas'), col = colors,dimnames = c("One","Two","Three"))
-ggtern::ggtern(data = ternPlotData,
-               ggtern::aes(x = V1, y = V2, z = V3, color = as.character(collapsedSecondHalfincl$State))) + 
-  geom_point(size=4) + 
-  ggtern::theme_rgbw() +
-  guides(color = guide_legend(title = "State")) +
-  labs(x = "One", y = "Two", z = "Three") + 
-  ggtern::theme_zoom_center(x = 1.01)
-
-
+plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Plain"),1.1,"State")
+plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Plain","Drugs"),1.1,"Mouse")
+plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Drugs"),1.1)
 
 # Print the archetypes to console
 t(parameters(bestArchetypes[[3]]))
 
 # Plot the archetypes as barplots
-barplot(bestArchetypes[[3]], collapsedSecondHalf, percentiles = TRUE)
+barplot(bestArchetypes[[3]], collapsedSecondHalfTrials, percentiles = TRUE)
+
+
 ```
 
 
@@ -111,7 +132,7 @@ barplot(bestArchetypes[[3]], collapsedSecondHalf, percentiles = TRUE)
 ```{r try Archetypal Analysis with predefined archetypes}
 
 
-archtypesGridSearch <- function(archeMat, resolution = 1000, data) {
+archtypesGridSearch <- function(archeMat, resolution = 1000, data,mouseData) {
   
     tarcheMat <- t(archeMat)
     alphas <- matrix(0,nrow = ncol(tarcheMat), ncol = nrow(data))
@@ -129,6 +150,7 @@ archtypesGridSearch <- function(archeMat, resolution = 1000, data) {
     allcombs <- do.call(rbind, matrixList)
 
     for(d in 1:nrow(data) ){
+        print(d)
         dataPoint <-  data[d,]
         Aprox <-  tarcheMat %*% t(allcombs)
         ers <- colSums((sweep(Aprox, 1, t(dataPoint), "-"))^2)
@@ -151,8 +173,12 @@ archtypesGridSearch <- function(archeMat, resolution = 1000, data) {
                             scale_fill_gradient(low = "#075AFF", high = "#FF0000") +
                             scale_x_continuous(breaks = NULL) +
                             scale_y_continuous(breaks = NULL) + 
-                            theme_minimal() +
-                            coord_fixed()
+                            theme_classic() +
+                            coord_fixed() +
+                            ggtitle(paste0("RMSE landscape for mouse: ",mouseData$Mouse[d], " ", mouseData$State[d]),
+                                subtitle = paste0("Minimum RMSE: ",round(minError,4))) +
+                            annotate("point", x = currBest[1], y = currBest[2], size = 7, color = "#000000",shape = "x") + 
+                            ylab("GO-Uncertainty") 
 
 
     }
@@ -174,14 +200,39 @@ archMat <- matrix(c(1/3, 1/3, 1/3, 0.5, 0.5, 0.5, 1,
                                                     TesmerFeatures))           
 
 
-archeTypes <- archtypesGridSearch(archMat,1000,collapsedSecondHalf)
+archeTypes <- archtypesGridSearch(archMat,0.001,collapsedSecondHalf,collapsedSecondHalfincl)
+
+#fedFasted <- which(collapsedSecondHalfincl$State == "Fasted" | collapsedSecondHalfincl$State == "Fed")
+#fedFastedVehicle <- which(collapsedSecondHalfincl$State == "FastedVeh" | collapsedSecondHalfincl$State == "FastedAlm")
+#fastedFastedVehicle <- which(collapsedSecondHalfincl$State == "FastedVeh" | collapsedSecondHalfincl$State == "Fasted")
+
+
     
 ```
 
 ```{r plot Archetypal Analysis with predefined archetypes}
 
+alphas <- as.data.frame(t(archeTypes[[1]]))
+colnames(alphas) <- c("Circle","GO","Uncertainty")
+# Create a vector whic contains the oppiite state for each state
+mappingStateThing <- c("FastedVeh" = "Drugs",
+                    "Fasted" = "Plain",
+                    "Fed" = "Plain",
+                    "FastedAlm" = "Drugs")
 
-# Create a mapping from State to color
-vcd::ternaryplot(t(archeTypes), col = colors,dimnames = c("Circle","GO","Uncertainty"))
+
+
+# Save the plot as a pdf wit cowplot
+#cowplot::ggsave("ArchetypalAnalysis.pdf", width = 10, height = 10, units = "cm")
+#cowplot::plot_grid(plotlist = archeTypes[[2]], ncol = 4)
+
+plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Plain"),1.1,"State")	
+plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Drugs"),1.1,"State")
+
+plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Drugs","Plain"),1,"Mouse")
+
+
+
+```
 
 ```
