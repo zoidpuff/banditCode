@@ -6,563 +6,269 @@ output: github_document
 Read in the data and store it as a data frame
 
 ```{r setup, include=FALSE}
+
 library(rhdf5)
 library(tidyverse)
-datafile <- '/home/gummi/banditExperiment/dataset.data'
+library(ggplot2)
+
 ```
 
 
 ```{r helper functions}
+# Load helper functions
+source("banditAnalysis.r")
 
-# Add prefix to named vecs
-addPrefix <- function(x,prefix){
-    names(x) <- paste0(prefix,names(x))
-    return(x)
-}
-
-# Function for computing cramersV for vector with a certain lagg
-cramersVautoCorr <- function(x,lagg) {
-    if(lagg >= length(x)){
-        print("Cramers V comparison has a lagg that is longer than the vector")
-        return(NA)
-    }
-
-    if(length(unique(x[-c(1:lagg,length(x):(length(x)-lagg))])) <= 1){
-        print("Cramers V comparison Only has one unique value returning 1")
-        print(x)
-        print(x[-c(1:lagg,length(x):(length(x)-lagg))])
-        print("--------------------")
-        return(1)
-    }
-
-    cramerV <- rcompanion::cramerV(x[-c(1:lagg)],lag(x,lagg)[-c(1:lagg)]) 
-    return(cramerV)   
-}
-
-# Function to check if the mouse made the optimal choice given a bandit
-.optimalChoice <- function(bandit) {
-    # Seprate the string by the > symbol
-    banditSplit <- str_split(bandit,">")
-    if(banditSplit[[1]][2] == "1"){
-        return("TRUE")
-    }else if(banditSplit[[1]][1] == "1" & banditSplit[[1]][2] == "0.5"){
-        return("TRUE")
-    }else {
-        return("FALSE")}
-
-}
-# Vectorize the .optimalChoice function
-optimalChoice <- Vectorize(.optimalChoice)
-
-# Function that takes the pump choices and translates them into which bandit was chosen given the probabilities at each pump
-.banditChoice <- function(pumpChoice,bandit,pumbProb_A,pumpProb_B,pumpProb_C){
-    if (bandit == "AB"){	
-        isAt <- pumpProb_C}
-    else if (bandit == "AC"){
-        isAt <- pumpProb_B}
-    else if (bandit == "BC"){
-        isAt <- pumbProb_A}
-    else if (bandit == "ABC"){
-        isAt <- NA}
-
-    if (pumpChoice == "A"){
-        return(paste0(isAt,">",pumbProb_A))
-    }else if (pumpChoice == "B"){
-        return(paste0(isAt,">",pumpProb_B))
-    }else if (pumpChoice == "C"){
-        return(paste0(isAt,">",pumpProb_C))
-    }else{
-        return(NA)
-        }
-    }	
-
-.banditChoice <- Vectorize(.banditChoice)
-
-# Wrapper function for determining which bandit was chosen
-banditChoice <- function(experiment,attribute,returnStats) {
-    A_Prob <- attribute$A_Prob
-    B_Prob <- attribute$B_Prob
-    C_Prob <- attribute$C_Prob
-    banditChoices <- .banditChoice(experiment[["Choice"]],experiment[["Bandit"]],A_Prob,B_Prob,C_Prob)
-
-    # If first string starts with NA, remove it
-    if(str_starts(banditChoices[1],"NA")){
-        banditChoices <- banditChoices[-1]
-        } 
-
-    if(!returnStats){
-        return(banditChoices)
-    }
-    banditChoiceCount <- table(banditChoices)
-
-    # Compute the probability of choosing each bandit
-    banditChoiceProb <- as_tibble(banditChoiceCount) %>%
-                            separate("banditChoices",c("from","to"),sep = ">",remove = FALSE) %>%
-                            group_by(from) %>%
-                            mutate(Prob = n/sum(n))
-
-    # Convert tibble to a named vector
-    banditChoiceProb <- setNames(banditChoiceProb$Prob,banditChoiceProb$banditChoices)
-
-    # Reorder the vectors and make sure they have the all all the bandits
-    banditChoiceCount <- banditChoiceCount[c("0.25>0.5","0.25>1", "0.5>0.25","0.5>1","1>0.25","1>0.5")] %>%
-                            addPrefix("banditChoiceCount_")
-
-    banditChoiceProb <- banditChoiceProb[c("0.25>0.5","0.25>1", "0.5>0.25","0.5>1","1>0.25","1>0.5")] %>%
-                            addPrefix("banditChoiceProb_")
-
-    # Compute the  of the bandit choices
-        # First split the bandit choice three vectors based in bandit
-        which(startsWith(banditChoices,"0.25")) -> inds_025
-        which(startsWith(banditChoices,"0.5")) -> inds_05
-        which(startsWith(banditChoices,"1")) -> inds_1
-
-        # Compute the cramerV lagged for each bandit
-
-        # FIX THAT BANDIT CHOICES IS ALWAYS A TWO LEVEL FACTOR
-        choices025 <- factor(banditChoices[inds_025], levels=c("0.25>0.5","0.25>1"))
-        choices05 <- factor(banditChoices[inds_05], levels=c("0.5>0.25","0.5>1"))
-        choices1 <- factor(banditChoices[inds_1], levels=c("1>0.25","1>0.5"))
-
-        cramer_025 <- cramersVautoCorr(choices025,1) %>% addPrefix("cramer_025")
-        cramer_05 <- cramersVautoCorr(choices05,1) %>% addPrefix("cramer_05")
-        cramer_1 <- cramersVautoCorr(choices1,1) %>% addPrefix("cramer_1")
-        cramers <- c(cramer_025,cramer_05,cramer_1)
-
-    # Compute stats around making the optimal choice
-        # Check if the mouse made the optimal choice for each bandit in the sequence
-        banditOptimalChoiceSeq <- optimalChoice(banditChoices)
-        banditChoicesOptimalCount <- banditOptimalChoiceSeq %>% table() %>% addPrefix("banditChoicesOptimalCount_")
-        banditChoicesOptimalProb <- banditChoicesOptimalCount/sum(banditChoicesOptimalCount) %>% addPrefix("banditChoicesOptimalProb_")
-        # Compute the cramerV for optimal choice
-        cramerOptimalChoice <- cramersVautoCorr(banditOptimalChoiceSeq,1) %>% addPrefix("cramerOptimalChoice")
-
-    return(c(banditChoiceCount,
-            banditChoiceProb,
-            cramers,
-            banditChoicesOptimalCount,
-            banditChoicesOptimalProb,
-            cramerOptimalChoice))
-
-}
-
-
-# Function for determining which direction the mouse chose
-.directionChoice <- function(pumpChoice,bandit) {
-
-    if (bandit == "AB"){
-        if (pumpChoice == "A"){
-            return("L") 
-        }else {
-            return("R")
-            }
-    }else if (bandit == "AC"){
-        if (pumpChoice == "C"){
-            return("L")
-        }else {
-            return("R")
-            }
-    }else if (bandit == "BC"){
-        if (pumpChoice == "B"){
-            return("L")
-        }else {
-            return("R")
-        }
-
-    } else {
-       return(NA)
-    }
-
-}
-
-# Wrapper function for determining which direction the mouse chose
-.directionChoice <- Vectorize(.directionChoice)
-
-biasStats <- function(experiment,attribute,returnDirectionChoiceOnly = FALSE) {
-    directionChoices <- .directionChoice(experiment[["Choice"]],experiment[["Bandit"]])
-
-    if(is.na(directionChoices[1])){
-        directionChoices <- directionChoices[-1]
-    }
-    if(returnDirectionChoiceOnly){
-        return(directionChoices)
-    }
-
-    directionChoicesCounts <- table(directionChoices)
-
-    if(length(directionChoicesCounts) < 2){
-        if(names(directionChoicesCounts) == "L") {
-            leftBias <- 1
-         } else {
-            leftBias <- 0 }
-    } else {
-        leftBias <- directionChoicesCounts[["L"]]/sum(directionChoicesCounts)
-    }
-    leftBias <- addPrefix(leftBias,"leftBias")
-
-    # Compute the cramersV for direction choice
-    cramerDirectionChoice <- cramersVautoCorr(directionChoices,1) %>% addPrefix("cramerDirectionChoice")
-
-    # Compute the pump bias
-        # Compute the pump count choices
-    pumpProbAbs <- table(experiment[["Choice"]])/sum(table(experiment[["Choice"]]))
-    pumpProbAbs <- pumpProbAbs[c("A","B","C")] 
-
-    pumpToProb <- setNames(c("A","B","C"),as.character(c(attribute$A_Prob,
-                                        attribute$B_Prob,
-                                        attribute$C_Prob)))
-
-    pumpCountRel <- pumpProbAbs[pumpToProb[c("0.25","0.5","1")]] %>% addPrefix("pumpBiasProb_")
-    pumpProbAbs <- pumpProbAbs %>% addPrefix("pumpBiasLoc_")
-    
-    return(c(leftBias,cramerDirectionChoice,pumpCountRel,pumpProbAbs))
-
-}
-
-
-# Create a function that takes in experiment and filters it for some a time window in seconds
-
-filterSeqByTime <- function(experiment,windowStart,windowEnd) {
-    if (length(experiment[["Choice"]]) == 0){
-        errorCondition("Choice is empty")
-    }
-    if(length(experiment[["Choice"]]) != length(experiment[["Time"]])){
-        errorCondition("Choice and Time must be the same length")
-    }
-    if(windowStart > windowEnd){
-        errorCondition("windowStart must be less than windowEnd")
-    }
-
-    inds <- (as.numeric(experiment[["Time"]]) > windowStart) & (as.numeric(experiment[["Time"]]) < windowEnd)
-    newExp <- experiment
-    newExp[["Choice"]] <- experiment[["Choice"]][inds]
-    newExp[["Bandit"]] <- experiment[["Bandit"]][inds]
-    newExp[["Time"]] <- experiment[["Time"]][inds]
-    newExp[["Reward"]] <- experiment[["Reward"]][inds]
-    return(newExp)
-
-}
-
-# Fucntion for splitting up the probabilistic part into into sections and computing the stats for each section
-splitExperiment <- function(experiment,attribute,n_splits,Prob) {
-    if(Prob){
-        start <- attribute$Probabilistic_Switch
-    } else {
-       start <- 0
-    }
-    res <- list()
-    starts <- seq(start,
-                  attribute$Duration,length.out = n_splits+1)
-    for(i in 1:n_splits){
-        expTemp <- filterSeqByTime(experiment,starts[i],starts[i+1])
-        res[[paste0(starts[i],"-",starts[i+1])]] <- mouseExpStats(expTemp,attribute) %>% addPrefix(paste0(starts[i],"_",starts[i+1]))
-
-    }
-    return(res)
-}
-
-# Create a function that computes the number of time a mouse goes left or right three times in row
-circleStat <- function(experiment,attribute) {
-    directionChoices <- biasStats(experiment,attribute,returnDirectionChoiceOnly = TRUE)
-    # Check if the sequence is atleast 3 long else just return na
-    if(length(directionChoices) > 2) {
-        countCircles <- 0
-        for (i in 1:(length(directionChoices)-2)){
-            if (directionChoices[i] == directionChoices[i+1] & directionChoices[i+1] == directionChoices[i+2]){
-                countCircles <- countCircles + 1
-            }
-        }
-        ProbOfCircle <- countCircles/(length(directionChoices)-2) %>% addPrefix("ProbOfCircle")
-
-
-    
-        #Count number of times the mouse changes direction
-        countDirectionChanges <- 0
-        for(i in 1:(length(directionChoices)-1)){
-                if (directionChoices[i] != directionChoices[i+1]){
-                    countDirectionChanges <- countDirectionChanges + 1
-                }
-            }
-    
-        probDirectionChanges <- countDirectionChanges/length(directionChoices) %>% addPrefix("probDirectionChanges")
-        countCircles <- addPrefix(countCircles,"circleCount")
-        countDirectionChanges <- addPrefix(countDirectionChanges,"countDirectionChanges")
-    } else {
-        countCircles <- c(NA) %>% addPrefix("countCircles")
-        ProbOfCircle <- c(NA) %>% addPrefix("ProbOfCircle")
-        probDirectionChanges <- c(NA) %>% addPrefix("probDirectionChanges")
-    }
-
-    return(c(countCircles,ProbOfCircle,probDirectionChanges))
-
-}
-
-# Function for determining how fast the mouse is making choices
-mouseSpeed <- function(experiment,attribute) {
-    banditChoices <- banditChoice(experiment,attribute,FALSE)
-    time <- as.numeric(experiment[["Time"]])
-    timeDiff <- diff(time)
-    meanTimeToChoose <- mean(timeDiff) %>% addPrefix("meanTimeToChoice")
-    if(length(timeDiff) != length(banditChoices)){
-         banditChoices <- banditChoices[-1]
-    }
-
-    timePerBandit <- data.frame("choice" = banditChoices,
-                                 "timeDiff" = timeDiff) %>%
-                                        group_by(choice) %>%
-                                        summarise(meanTimeToChoose = mean(timeDiff))
-
-    # Convert tibble to a named vector
-    timePerBandit <- setNames(timePerBandit$meanTimeToChoose,timePerBandit$choice)
-    timePerBandit <- timePerBandit[c("0.25>0.5","0.25>1", "0.5>0.25","0.5>1","1>0.25","1>0.5")] %>% addPrefix("MeantimePerBanditChoice_")
-
-    return(c(meanTimeToChoose,timePerBandit))
-
-}
-
-
-rewardAttainment <- function(experiment,attribute) {
-    banditChoices <- banditChoice(experiment,attribute,FALSE)
-    reward <- as.logical(experiment[["Reward"]])
-
-    totalReward <- sum(reward) %>% addPrefix("totalReward")
-    rewardProb <- totalReward/length(reward) %>% addPrefix("rewardProb")
-
-
-    if(length(reward) != length(banditChoices)){
-         reward <- reward[-1]
-    }
-    # Get the reward per bandit
-    rewardPerBanditProb <- data.frame("choice" = banditChoices,
-                                    "reward" = reward) %>%
-                                    group_by(choice) %>%
-                                    summarise(rewardPerBandit = mean(reward))
-
-    # Convert tibble to a named vector and order
-    ObsRewardProbPerBandit <- setNames(rewardPerBanditProb$rewardPerBandit,rewardPerBanditProb$choice)
-    ObsRewardProbPerBandit <- ObsRewardProbPerBandit[c("0.25>0.5","0.25>1", "0.5>0.25","0.5>1","1>0.25","1>0.5")] %>% 
-                                addPrefix("ObsRewardProbPerBandit")
-
-    # Compute the observed reward per station
-    ObsProbRewardPerStation <- data.frame("choice" = banditChoices,
-                                    "reward" = reward) %>%
-                        separate("choice",c("from","to"),sep = ">",remove = FALSE) %>%
-                        group_by(to) %>%
-                        summarise(rewardPerStation = mean(reward))
-
-
-    # Convert tibble to a named vector and order
-    ObsProbRewardPerStation <- setNames(ObsProbRewardPerStation$rewardPerStation,ObsProbRewardPerStation$to)
-    ObsProbRewardPerStation <- ObsProbRewardPerStation[c("0.25","0.5","1")] %>% addPrefix("ObsProbRewardPerStation_")
-
-    # Compute the probability of getting a reward after making the optimal choice
-    optimalOrNot <- optimalChoice(banditChoices) %>% as.logical()
-    rewardProbAfterOptimalChoic <- sum(reward[optimalOrNot])/sum(optimalOrNot) %>% addPrefix("rewardAfterOptimal")
-
-    return(c(totalReward,
-            rewardProb,
-            ObsRewardProbPerBandit,
-            ObsProbRewardPerStation,
-            rewardProbAfterOptimalChoic))
-
-}
-
-
-# Function for determining some stats given a experiment object and its attribute
-mouseExpStats <- function(experiment,attribute){
-
-    print(paste0("Length of experiment: ",length(experiment[["Choice"]])))
-    # Get number of trials
-    numberOfTrails <- length(experiment[["Choice"]]) %>% addPrefix("numberOfTrails")
-
-    # Get bandit choices stats
-    banditChoices <- banditChoice(experiment, attribute, TRUE)
-    
-    # Get bias stats
-    biasStats <- biasStats(experiment, attribute)
-
-    # Retrieve Circle stats
-    circleStats <- circleStat(experiment,attribute)	
-
-    # Retrieve Mouse speed stats
-    mouseSpeeds <- mouseSpeed(experiment,attribute)
-
-    # Retrieve Reward stats
-    rewardAttainment <- rewardAttainment(experiment,attribute)
-
-    res <- c(numberOfTrails,banditChoices,biasStats,circleStats,mouseSpeeds,rewardAttainment)
-    return(res)
-}
 ```
 
+```{r test stats functions}
+# Generate a synthetic experiment with the function above
+
+syntheticExperiment1 <- syntheticData(nTrials = 300,
+                                      LeftBias=0.75,
+                                      ProbBandicVec = setNames(c(0.8,0.8,0.8),c("AC>A","AB>A","BC>B")),
+                                      modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
+                                      timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                      RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+
+syntheticStats1 <- mouseExpStats(syntheticExperiment1[[1]],syntheticExperiment1[[2]],"Synthetic Experiment Test 1")
+```
+
+```{r try varying left bias}
+
+# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
+syntheticExperimentsLeftBias <- list()
+for(i in 1:100){
+    syntheticExperimentsTemp <- list()
+    for(j in 1:40){	
+        temp <- syntheticData(nTrials = 200,
+                                LeftBias=i/100, # VARY THE LEFT BIAS
+                                ProbBandicVec = setNames(c(0.5,0.5,0.5),c("AC>A","AB>A","BC>B")),
+                                modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
+                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i)) %>% unname()
+    }
+    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
+    syntheticExperimentsLeftBias[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
+}
+# Create a dataframe from the list of experiments
+syntheticExperimentsLeftBiasDF <- do.call(rbind.data.frame, syntheticExperimentsLeftBias) %>% readr::type_convert()
+colnames(syntheticExperimentsLeftBiasDF) <- names(syntheticStats1)
+
+
+```
+
+```{r try going from from random to optimal strategy}
+
+# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
+syntheticExperimentsOptimal <- list()
+for(i in 1:100){
+    syntheticExperimentsTemp <- list()
+    for(j in 1:40){	
+        temp <- syntheticData(nTrials = 200,
+                                LeftBias=0.5, # Keep the left Bias Stable (random)
+                                ProbBandicVec = setNames(c(1,1,1),c("AC>A","AB>A","BC>B")),
+                                modeProbVec = c(1-i/100,i/100,0), # LeftBias Opitmal Explorer
+                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i)) %>% unname()
+    }
+    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
+    syntheticExperimentsOptimal[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
+}
+# Create a dataframe from the list of experiments
+syntheticExperimentsOptimalDF <- do.call(rbind.data.frame, syntheticExperimentsOptimal) %>% readr::type_convert()
+colnames(syntheticExperimentsOptimalDF) <- names(syntheticStats1)
+
+
+```
+
+
+
+```{r test stats functions}
+ # Plot some of the results from the synthetic experiments
+ # Plot overlapped line plots for leftBias and probOfCircle
+syntheticExperimentsLeftBiasDF$leftBiasReal <- (1:100)/100
+syntheticExperimentsOptimalDF$OptimalStrategy <- (1:100)/100
+leftBiasPlot <- ggplot(syntheticExperimentsLeftBiasDF, aes(x=leftBiasReal)) + 
+                    geom_line(aes(y = ProbOfCircle, color = "Probility Of Circle")) +
+                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
+                    geom_line(aes(y = RewardProb, color = "Probability of Getting Reward")) +
+                    geom_line(aes(y = probDirectionChanges, color = "Probility of Direction Change")) +
+                    geom_line(aes(y = `banditChoiceProb_0.25>1`, color = "Probility 0.25>1")) +
+                    geom_line(aes(y = `banditChoiceProb_0.5>1`, color = "Probility 0.5>1")) +
+                    geom_line(aes(y = `banditChoiceProb_1>0.5`, color = "Probility 1>0.5")) +
+                    geom_line(aes(y = `ProbOfChoosing_1`, color = "Probility of choosing 1")) +
+                    geom_line(aes(y = `ProbOfChoosing_0.5`, color = "Probility of choosing 0.5")) +
+                    geom_line(aes(y = `ProbOfChoosing_0.25`, color = "Probility of choosing 0.25")) +
+                    labs(x = "Simulated Left Bias (Sanity Check)", y = "Probability") +
+                    theme_classic() + 
+                    scale_color_discrete(name = "Statistic")
+
+
+OptimalStratPlot <- ggplot(syntheticExperimentsOptimalDF, aes(x=OptimalStrategy)) + 
+                    geom_line(aes(y = ProbOfCircle, color = "Probility Of Circle")) +
+                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
+                    geom_line(aes(y = RewardProb, color = "Probability of Getting Reward")) +
+                    geom_line(aes(y = probDirectionChanges, color = "Probility of Direction Change")) +
+                    geom_line(aes(y = `banditChoiceProb_0.25>1`, color = "Probility of 0.25>1")) +
+                    geom_line(aes(y = `banditChoiceProb_0.5>1`, color = "Probility of 0.5>1")) +
+                    geom_line(aes(y = `banditChoiceProb_1>0.5`, color = "Probility of 1>0.5")) +
+                    geom_line(aes(y = `ProbOfChoosing_1`, color = "Probility of choosing 1")) +
+                    geom_line(aes(y = `ProbOfChoosing_0.5`, color = "Probility of choosing 0.5")) +
+                    geom_line(aes(y = `ProbOfChoosing_0.25`, color = "Probility of choosing 0.25")) +
+                    labs(x = "Probility Of Choosing Best Strat", y = "Probability") +
+                    theme_classic() + 
+                    scale_color_discrete(name = "Statistic")
+
+ggplot2::ggsave(paste0("./plots/OptimalStratPlot.pdf"),device = "pdf",OptimalStratPlot)
+ggplot2::ggsave(paste0("./plots/leftBiasPlot.pdf"),device = "pdf",leftBiasPlot)
+
+cowplot::plot_grid(leftBiasPlot, OptimalStratPlot, nrow = 2)
+
+```
+  
+
 ```{r read data loop}
+# Set the path to the hdf5 file
+datafile <- '/home/gummi/banditExperiment/dataset.data'
 
 # Load the hdf5 file
 data <- h5dump(datafile,load=TRUE)
 
-#checkLR <- list()
-
-extractedFeaturesDet <- list()
-extractedFeaturesProb <- list()
-
-for (mousetype in names(data)) { # WT
-
-   for (mouse in names(data[[mousetype]])) { # Mouse
-
-        sex <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/" ))$Sex
-
-        for (type in names(data[[mousetype]][[mouse]])) { # Det vs prob
-
-            for (state in names(data[[mousetype]][[mouse]][[type]])) { # Fasted vs fed
-
-                for (day in names(data[[mousetype]][[mouse]][[type]][[state]])) { # Day
-                        
-                        dataType = "Action"
-                            # Get the experiment
-                            experiment <- data[[mousetype]][[mouse]][[type]][[state]][[day]][[dataType]]
-                            attribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/",type,"/",state,"/",day,"/",dataType,"/"))
-                            MouseAttribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/"))
-                            # Check if experment is Det or Prob
-                            if(type == "Det") {
-                                 print(paste0("Started processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-                                # Get the bandit choices, direction choices, and pump choices for all trials
-
-                                expDetStats <- mouseExpStats(experiment, attribute)
-                                colNames <- names(expDetStats)
-                                DetData <-c("MouseType"=mousetype,
-                                            "Mouse"=mouse,
-                                            "Sex" =MouseAttribute$Sex,
-                                            "Type"=type,
-                                            "State"=state,
-                                            "Day"=day,
-                                            expDetStats)
-                                            
-                                colNamesDet <- names(DetData)
-                                extractedFeaturesDet[[paste0(mouse,"_",day,"_",state)]] <- DetData
-
-                            } else if (type == "Prob") {
-                                print(paste0("Started processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-
-                                # Filter out determenistic part and compute stats for the entire probabilistic part
-                                expProbDetPart <- filterSeqByTime(experiment,0,attribute$Probabilistic_Switch)
-                                ProbPartDetStats <- mouseExpStats(expProbDetPart, attribute) %>% addPrefix("DetPart_")
-
-                                expProb <- filterSeqByTime(experiment,
-                                                            attribute$Probabilistic_Switch,
-                                                            attribute$Duration)
-
-                                ProbPartEntireStats <- mouseExpStats(expProb, attribute) %>% addPrefix("ProbPart_")
-
-                                # Get summary stats for the probabilistic part split into parts n
-                                ProbPartStatsSplit <- splitExperiment(experiment,attribute,2,TRUE)
-                                ProbPartStatsFirst <- ProbPartStatsSplit[[1]]
-
-                                ProbData <- c("MouseType"=mousetype,
-                                        "Mouse"=mouse,
-                                        "Sex" =MouseAttribute$Sex,
-                                        "Type"=type,
-                                        "State"=state,
-                                        "Day"=day,
-                                        ProbPartDetStats,
-                                        ProbPartEntireStats,
-                                        unlist(ProbPartStatsSplit))
-
-                                colNamesProb <- names(ProbData)
-
-                                extractedFeaturesProb[[paste0(mouse,"_",day,"_",state)]] <- ProbData
-
-
-                            }
-                            print(paste0("Finished processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-                        #dataType = "Lick"
-                         #  exp <- data[[mousetype]][[mouse]][[type]][[state]][[day]][[dataType]]
-                          # Code_Lick <- paste0(exp[["Code_Lick"]],collapse = ",")
-                           # Pump_Lick <- paste0(exp[["Pump_Lick"]],collapse = ",")
-                           # Time_Lick <- paste0(exp[["Time_Lick"]],collapse = ",")
-                       
-                
-                }
-
-            }
-
-        }
-    
-   }
-
-}
-
-
-
-
-
-
-# convert list to dataframe and filter out Prob type
-extractedFeaturesDetDF <- do.call(rbind.data.frame, extractedFeaturesDet)
-extractedFeaturesProbDF <- do.call(rbind.data.frame, extractedFeaturesProb)
-
-
-#colnames(checkLR) <- c("LeftProb","mouse", "type","state","day","sex","A","B","C")
+# Compute experiment stats
+experimentData <- tabulateExperiments(data,datafile,2)
 
 ```
 
 
-```{r read data loop}
-checkLR <- do.call(rbind.data.frame, checkLR)
-colnames(checkLR) <- c("LeftProb","mouse", "type","state","day","sex","A","B","C")
+```{r explore data}
+# Use the features that Alex asked for
+TesmerFeatures <- c("ProbOfChoosing_0.25",
+                  "ProbOfChoosing_0.5",
+                  "ProbOfChoosing_1",
+                  "banditChoiceProb_0.25>1",
+                  "banditChoiceProb_1>0.5",
+                  "banditChoiceProb_0.5>1",
+                  "numberOfTrials",
+                  "ProbOfCircle")
+
+# Generate plots for whole probabalistic part
+plotPCAMouse(experimentData[["ProbExperimentsProbPart"]],
+            TesmerFeatures,
+            "SelectFeatures_EntireProbPart",
+            4,
+            0.8,
+            TRUE)
+
+# Generate plots for replicate collapsed whole probabalistic part
+plotPCAMouse(averageReplicates(experimentData[["ProbExperimentsProbPart"]]),
+            TesmerFeatures,
+            "SelectFeatures_ReplicateCollapsedProbPart",
+            3,
+            0.9,
+            FALSE)
 
 
-pumpBias <-checkLR %>% filter(type != "Prob") %>%
-        select(-type,-day) %>%
-        tidyr::pivot_longer(cols = c("A","B","C"),names_to = "Pump",values_to = "Prob")
+# Generate plots for second half of probabalistic part
+plotPCAMouse(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]],
+            TesmerFeatures,
+            "SelectFeatures_SecondHalfProbPart",
+            4,
+            0.8,
+            TRUE)
+
+# Generate plots for replicate collapsed second half of probabalistic part
+plotPCAMouse(averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]),
+            TesmerFeatures,
+            "SelectFeatures_ReplicateCollapsedSecondHalfProbPart",
+            4,
+            0.7,
+            FALSE)
+
+# Get the numeric columns of the data
+numericColumns <- sapply(experimentData[["ProbExperimentsProbPart"]],is.numeric)
+
+# Generate plots probabalistic part with all features that are numeric
+plotPCAMouse(experimentData[["ProbExperimentsProbPart"]],
+            names(numericColumns)[numericColumns][-1],
+            "AllFeatures_EntireProbPart",
+            4,
+            0.4,
+            FALSE)
+
+# Generate plots for replicate collapsed probabalistic part with all features that are numeric
+plotPCAMouse(averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]),
+            names(numericColumns)[numericColumns][-1],
+            "AllFeatures_SecondHalfProbPart",
+            4,
+            0.4,
+            FALSE)
+
+# Generate plots for replicate collapsed probabalistic part with all features that are numeric
+plotPCAMouse(averageReplicates(experimentData[["ProbExperimentsProbPart"]]),
+            names(numericColumns)[numericColumns][-1],
+            "AllFeatures_ReplicateCollapsedProbPart",
+            4,
+            0.4,
+            FALSE)
+
+# Generate plots for replicate collapsed probabalistic part with all features that are numeric
+
+# Filter out for only fasted mice
+averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]) %>%
+            filter(State == "Fasted") -> SecondHalfCollapsedFastedOnly
+
+plotPCAMouse(SecondHalfCollapsedFastedOnly,
+            TesmerFeatures,
+            "SelectFeatures_SecondHalfProbPart_FastedOnly",
+            4,
+            0.4,
+            FALSE)
+
+
+```
+
+
+
+```{r plot some stuff}
+
+DetData <- experimentData[["DetExperiments"]]      
 
 # Plot left choice probability boxplot fill by sex and faceted by state
-ggplot(checkLR, aes(x = sex,y=as.numeric(LeftProb),fill=sex)) + 
+ggplot(DetData, aes(x = Sex,y=as.numeric(leftBias),fill=Sex)) + 
         geom_boxplot() + 
         theme_classic() +
-        facet_wrap(.~state,) 
+        labs(y = "Left Choice Probability",title = "Directional Bias") +
+        facet_wrap(.~State) 
 
 # Plot left choice probability boxplot fill by state and faceted by mouse
-ggplot(checkLR, aes(x = state,y=as.numeric(LeftProb),fill=state)) + 
+ggplot(DetData, aes(x = as.factor(Mouse),y=as.numeric(leftBias),fill=Sex)) + 
         geom_boxplot() + 
         theme_classic() +
-        facet_wrap(.~paste0(mouse," : ",sex))
+        labs(y = "Left Choice Probability",title = "Directional Bias",x="Mouse")
 
-# Plot pump bias
-ggplot(pumpBias, aes(x = Pump,y=as.numeric(Prob),fill=Pump)) + 
+# Create a pivot of the pumb bias
+DetData %>%
+        dplyr::select(Mouse,
+                      State,
+                      Sex,
+                      ProbOfChoosing_A,
+                      ProbOfChoosing_B,
+                      ProbOfChoosing_C) %>%
+        tidyr::pivot_longer(cols = c("ProbOfChoosing_A",
+                                     "ProbOfChoosing_B",
+                                     "ProbOfChoosing_C"),
+                            names_to = "Pump",
+                            values_to = "Prob") %>%
+ggplot(aes(x = Pump,y=as.numeric(Prob),fill=Pump)) + 
         geom_boxplot() + 
         theme_classic() +
-        facet_wrap(.~state) 
+        geom_hline(yintercept = 0.33,linetype="dashed") 
+        #facet_wrap(.~Mouse)
 
 
 
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-
-      df <- rbind(tibble(mousetype,
-                                        mouse,
-                                        type,
-                                        state,
-                                        day,
-                                        Bandit,
-                                        Choice,
-                                        Reward,
-                                        Time,
-                                        A_Prob,
-                                        B_Prob,
-                                        C_Prob,
-                                        Duration,
-                                        Experiment,
-                                        Mode,
-                                        Code_Lick,
-                                        Pump_Lick,
-                                        Time_Lick,
-                                        Probabilistic_Switch),df)

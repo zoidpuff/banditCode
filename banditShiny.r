@@ -6,6 +6,7 @@ library(tidyverse)
 library(ggplot2)
 library(shiny)
 library(shinyWidgets)
+library(shinythemes)
 library(ggplot2)
 
 datafile <- '/home/gummi/banditExperiment/dataset.data'
@@ -16,9 +17,12 @@ data <- h5dump(datafile,load=TRUE)
 # Compute experiment stats
 experimentData <- tabulateExperiments(data,datafile,2)
 experimentData <- experimentData[["ProbExperimentsProbPart"]]
+experimentData$Mouse <- as.character(experimentData$Mouse)
+names(experimentData) <- make.names(names(experimentData))
+
 
 # Define UI for application
-ui <- fluidPage(
+ui <- fluidPage(theme = shinytheme("darkly"),
    
    # Application title
    titlePanel("Interactive Barplot of Experiment Data"),
@@ -39,7 +43,7 @@ ui <- fluidPage(
       
       # Main panel for displaying plots
       mainPanel(
-         plotOutput("barplot")
+         plotOutput("barplot", height = 900)
       )
    )
 )
@@ -53,7 +57,7 @@ server <- function(input, output) {
       p <- ggplot(experimentData, aes_string(x = input$fill, y = input$variable, fill = input$fill)) +
          geom_boxplot() +
          theme_classic() +
-         labs(y = input$variable, title = "Directional Bias") 
+         labs(y = input$variable, title = "Experiment Data") 
       
       # If a facet variable is chosen, add facet_wrap
       if (!is.null(input$facet) && input$facet != "") {
