@@ -20,7 +20,7 @@ library(archetypes)
 source("banditAnalysis.r")
 
 
-plotTernaryWithArrows <- function(alphasThree, Grouplabels, mappingVec,FilterVec,zoom,colVar){
+plotTernaryWithArrows <- function(alphasThree, Grouplabels, mappingVec,FilterVec,zoom,colVar,title=""){
     # Create a vector which contains the opposite state for each state
     experimentalGroupings <- paste0(Grouplabels$Mouse,
                                     mappingVec[as.character(Grouplabels$State)])
@@ -40,7 +40,8 @@ plotTernaryWithArrows <- function(alphasThree, Grouplabels, mappingVec,FilterVec
                 ggtern::theme_rgbw() +
                 guides(color = guide_legend(title = colVar)) +
                 labs(x = varNames[1], y = varNames[2], z = varNames[3],) + 
-                ggtern::theme_zoom_center(x = zoom)
+                ggtern::theme_zoom_center(x = zoom) +
+                ggtitle("",subtitle = title)
     return(p)
   }
 
@@ -89,7 +90,7 @@ Do iterative archetypal analysis with the arhcetypal R package
 
 ```{r try Archetypal Analysis}
 
-arhcetypal <- stepArchetypes(data = collapsedSecondHalfTrials, 
+arhcetypal <- stepArchetypes(data = collapsedSecondHalf, 
                          k = 1:10, 
                          minImprovement = 0.000001,
                          verbose = TRUE,
@@ -103,24 +104,66 @@ bestArchetypes <- bestModel(arhcetypal)
 # Plot the scree plot of the archetypal analysis (RSS as a function of number of archetypes)
 screeplot(arhcetypal)
 
+# Plot the archetypes as barplots
+barplot(bestArchetypes[[3]], collapsedSecondHalf, percentiles = TRUE)
+
 ```
 
 
 ```{r plot Archetypal Analysis}
 
 
+# Create a vector whic contains the oppiite state for each state
+DruggedVsNot <- c("FastedVeh" = "Drugs",
+                    "Fasted" = "Plain",
+                    "Fed" = "Plain",
+                    "FastedAlm" = "Drugs")
+
+FedVsFasted <- c("FastedVeh" = "Fasted",
+                "Fasted" = "Fasted",
+                "Fed" = "Fed",
+                "FastedAlm" = "FastedDrugged")
+
+
+
+
 ternPlotData <- as.data.frame(coef(bestArchetypes[[3]],'alphas'))
 colnames(ternPlotData) <- c("One","Two","Three")
 
-plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Plain"),1.1,"State")
-plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Plain","Drugs"),1.1,"Mouse")
-plotTernaryWithArrows(ternPlotData, collapsedSecondHalfincl, mappingStateThing, c("Drugs"),1.1)
+a <- plotTernaryWithArrows(ternPlotData,
+                        collapsedSecondHalfincl,
+                        mappingStateThing,
+                        c("Plain"),
+                        1.1,
+                        "State",
+                        "Plain")
+
+b <- plotTernaryWithArrows(ternPlotData,
+                        collapsedSecondHalfincl,
+                        mappingStateThing,
+                        c("Drugs"),
+                        1.1,
+                        "State",
+                        "Intervention")
+
+c <- plotTernaryWithArrows(ternPlotData,
+                        collapsedSecondHalfincl,
+                        FedVsFasted,
+                        c("Fasted"),
+                        1.1,
+                        "State",
+                        "Fasted Comparison")
+
+
+
+gridExtra::grid.arrange(ggtern::arrangeGrob(grobs = list(a,b,c),ncol = 3))
+
+
 
 # Print the archetypes to console
 t(parameters(bestArchetypes[[3]]))
 
-# Plot the archetypes as barplots
-barplot(bestArchetypes[[3]], collapsedSecondHalfTrials, percentiles = TRUE)
+
 
 
 ```
@@ -131,14 +174,28 @@ barplot(bestArchetypes[[3]], collapsedSecondHalfTrials, percentiles = TRUE)
 
 ```{r try Archetypal Analysis with predefined archetypes}
 
+# idno, i think I could do this by some backticks thing but whatevs
+squareVec <- function(x) {
+    return(x^2)
+}
 
-archtypesGridSearch <- function(archeMat, resolution = 1000, data,mouseData) {
-  
+archtypesGridSearch <- function(archeMat, resolution = 0.001, data, mouseData, lossFunction,scaling,returnHeatmap = FALSE) {
+    
+    # Transpose the archetypes for lin alg reasons
     tarcheMat <- t(archeMat)
+
+    # Initialize the matrix of alphas
     alphas <- matrix(0,nrow = ncol(tarcheMat), ncol = nrow(data))
+    
+    # Scale the data matrix and store the scaling factors to use on archetypes matrix
+    ## This is so that features are of the same scale and contribute equally to the loss function
+    if(scaling) {
+        data <- scale(data, center = FALSE, scale = TRUE) # Dont think centering is necessary
 
-    heatPlots <- list()
-
+        # Scale the archetypes matrix with the same scaling factors as the data matrix
+        tarcheMat <- tarcheMat / attr(data, "scaled:scale")  
+    }
+    # Create a list of all possible combinations of the archetypes given resolution and store in matrix    
     matrixList <- list()
     for(i in seq(0, 1, by = resolution)) {
         if(i == 1) {j_seq <- c(0)} else {
@@ -149,11 +206,14 @@ archtypesGridSearch <- function(archeMat, resolution = 1000, data,mouseData) {
     }
     allcombs <- do.call(rbind, matrixList)
 
+    # Initialize the list of heatmaps
+    heatPlots <- list()
+
     for(d in 1:nrow(data) ){
         print(d)
         dataPoint <-  data[d,]
         Aprox <-  tarcheMat %*% t(allcombs)
-        ers <- colSums((sweep(Aprox, 1, t(dataPoint), "-"))^2)
+        ers <- colSums(lossFunction(sweep(Aprox, 1, t(dataPoint), "-")))
         minError <- min(ers)
         currBest <- allcombs[which.min(ers),]
         alphas[,d] <- currBest
@@ -161,11 +221,6 @@ archtypesGridSearch <- function(archeMat, resolution = 1000, data,mouseData) {
         heatmapPrim <- cbind(allcombs[,1:2],ers)
         colnames(heatmapPrim) <- c("Circle","GO","Error")
         heatmapPrim <- as.data.frame(heatmapPrim)
-        # Use pivot_wider to make the data frame wide
-        #heatmapPrimWide <- heatmapPrim %>% 
-         #                   as.data.frame() %>%
-          #              pivot_wider(names_from = c("Circle"), values_from = "Error")
-
 
         
         heatPlots[[d]] <- ggplot(heatmapPrim,aes(x = Circle, y = GO, fill = Error)) +
@@ -182,7 +237,16 @@ archtypesGridSearch <- function(archeMat, resolution = 1000, data,mouseData) {
 
 
     }
-    return(list(alphas,heatPlots))
+    alphas <- alphas %>% t() %>% as.data.frame()
+    colnames(alphas) <- c("Circle","GO","Uncertainty")
+    gc(verbose = FALSE)
+
+
+    if(returnHeatmap) {
+        return(list(alphas,heatPlots))
+    } else {
+        return(list(alphas))
+    }
 }
 
 
@@ -197,42 +261,211 @@ archMat <- matrix(c(1/3, 1/3, 1/3, 0.5, 0.5, 0.5, 1,
                                                      ncol = 7, 
                                                      byrow = TRUE,
                                                     dimnames = list( c("Circle","GO","Uncertainty"),
-                                                    TesmerFeatures))           
+                                                    TesmerFeatures))
+# Find the value in the vector that is closest to some value
+closeVal <- function(val,vec) {
+    return(vec[which.min(abs(vec - val))])
+}
 
+# Do the same bespoke archtypal analysis but instead of using hypothetical values, use the value in the data that is closest to that. 
+archMatObsVals <- matrix(0,nrow = 3, ncol = 7,dimnames = list( c("Circle","GO","Uncertainty"),TesmerFeatures))
 
-archeTypes <- archtypesGridSearch(archMat,0.001,collapsedSecondHalf,collapsedSecondHalfincl)
-
-#fedFasted <- which(collapsedSecondHalfincl$State == "Fasted" | collapsedSecondHalfincl$State == "Fed")
-#fedFastedVehicle <- which(collapsedSecondHalfincl$State == "FastedVeh" | collapsedSecondHalfincl$State == "FastedAlm")
-#fastedFastedVehicle <- which(collapsedSecondHalfincl$State == "FastedVeh" | collapsedSecondHalfincl$State == "Fasted")
-
+for(i in 1:nrow(archMat)) {
+    for(j in 1:ncol(archMat)) {
+        archMatObsVals[i,j] <- closeVal(archMat[i,j],collapsedSecondHalfincl[,colnames(archMat)[j]])
+    }
+}
 
     
 ```
 
 ```{r plot Archetypal Analysis with predefined archetypes}
 
-alphas <- as.data.frame(t(archeTypes[[1]]))
-colnames(alphas) <- c("Circle","GO","Uncertainty")
-# Create a vector whic contains the oppiite state for each state
-mappingStateThing <- c("FastedVeh" = "Drugs",
-                    "Fasted" = "Plain",
-                    "Fed" = "Plain",
-                    "FastedAlm" = "Drugs")
-
-
 
 # Save the plot as a pdf wit cowplot
 #cowplot::ggsave("ArchetypalAnalysis.pdf", width = 10, height = 10, units = "cm")
 #cowplot::plot_grid(plotlist = archeTypes[[2]], ncol = 4)
 
-plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Plain"),1.1,"State")	
-plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Drugs"),1.1,"State")
+# Gather the plots in a list to plot with cowplot
+plotList <- list()
+groupings <- c("Plain","Drugs")
+losses <- list(abs,squareVec)
+lossNames <- c("L1","L2")
+archMats <- list(archMat,archMatObsVals)
+archNames <- c("Hypothetical","Observed")
 
-plotTernaryWithArrows(alphas, collapsedSecondHalfincl, mappingStateThing, c("Drugs","Plain"),1,"Mouse")
+for(i in 1:2) {
+    for(j in 1:2) {
+        temp <- archtypesGridSearch(archMats[[i]],
+                            0.001,
+                            collapsedSecondHalf,
+                            collapsedSecondHalfincl,
+                            losses[[j]],TRUE,FALSE)
 
+        for(k in 1:2) {
+            plotList[[paste(i,j,k)]] <- plotTernaryWithArrows(temp[[1]],
+                                                    collapsedSecondHalfincl,
+                                                    mappingStateThing,
+                                                    c(groupings[k]),
+                                                    1.1,
+                                                    "State",
+                                                    paste0("Loss: ",lossNames[j],"\n Grouping: ",groupings[k],"\n Archetypes: ",archNames[i]))                                         
+        }
+    }
+}
+
+# With scaling
+gridExtra::grid.arrange(ggtern::arrangeGrob(grobs = plotList,ncol = 4))
+
+for(i in 1:2) {
+    for(j in 1:2) {
+        temp <- archtypesGridSearch(archMats[[i]],
+                            0.001,
+                            collapsedSecondHalf,
+                            collapsedSecondHalfincl,
+                            losses[[j]],FALSE,FALSE)
+
+        for(k in 1:2) {
+            plotList[[paste(i,j,k)]] <- plotTernaryWithArrows(temp[[1]],
+                                                    collapsedSecondHalfincl,
+                                                    mappingStateThing,
+                                                    c(groupings[k]),
+                                                    1.1,
+                                                    "State",
+                                                    paste0("Loss: ",lossNames[j],"\n Grouping: ",groupings[k],"\n Archetypes: ",archNames[i]))                                         
+        }
+    }
+}
+
+
+
+# use cowplot to plot png files
+#cowplot::plot_grid(plotlist = plotList, ncol = 2)
+
+# Without scaling
+gridExtra::grid.arrange(ggtern::arrangeGrob(grobs = plotList,ncol = 4))
 
 
 ```
+
+
+```{r plot Archetypal Analysis with predefined archetypes yej}
+
+
+# Plot the delta of arachetypes across the groups
+
+# Do the archetypal analysis with the observed values
+archObsL2Scale <- archtypesGridSearch(archMatObsVals,
+                            0.001,
+                            collapsedSecondHalf,
+                            collapsedSecondHalfincl,
+                            squareVec,TRUE,TRUE)
+
+
+
+# crate a dataframe that contains the alpha values as well as the experimental groupings from the collapsedSecondHalfincl data
+archObsL2ScaleWithGroups <- cbind(archObsL2Scale[[1]],collapsedSecondHalfincl[,c("Mouse","State")])
+archObsL2ScaleWithGroups$State <- as.factor(archObsL2ScaleWithGroups$State)
+
+
+diff_df <- archObsL2ScaleWithGroups %>%
+    pivot_wider(names_from = State, values_from = c(Circle, GO, Uncertainty)) %>%
+    mutate(diff_Circle_FedFasted =  Circle_Fed - Circle_Fasted,
+         diff_GO_FedFasted = GO_Fed - GO_Fasted,
+         diff_Uncertainty_FedFasted = Uncertainty_Fed - Uncertainty_Fasted ,
+         diff_Circle_FastedVehFastedAlm = Circle_FastedAlm - Circle_FastedVeh ,
+         diff_GO_FastedVehFastedAlm = GO_FastedAlm - GO_FastedVeh ,
+         diff_Uncertainty_FastedVehFastedAlm = Uncertainty_FastedAlm - Uncertainty_FastedVeh) %>%
+         select(starts_with("diff_")) %>%
+    pivot_longer(cols = everything(), names_to = "State", values_to = "Delta") %>%
+    mutate(State = str_remove(State, "diff_")) %>%
+    separate(State, into = c("State", "Group"), sep = "_")
+
+# Change the Group column  so its Fed - Fasted instead of FedFasted
+diff_df$Group <- str_replace(diff_df$Group, "FedFasted", "Fasted -> Fed")
+diff_df$Group <- str_replace(diff_df$Group, "FastedVehFastedAlm", "FastedVeh -> FastedAlm")
+
+# Plot the delta of arachetypes across the groups with a ggplot box plot facted by group fill by state
+ggplot(diff_df, aes(x = State, y = Delta, fill = State)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  facet_wrap(~Group) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "State", y = "Delta", fill = "State") +	
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red")+ 
+    ggtitle("Delta Boxplot: Predefined archetypes")
+
+
+
+
+# Do the same for the archetypes from archtypes
+
+
+# crate a dataframe that contains the alpha values as well as the experimental groupings from the collapsedSecondHalfincl data
+autoArchetypesWithGroups <- cbind(ternPlotData,collapsedSecondHalfincl[,c("Mouse","State")])
+autoArchetypesWithGroups$State <- as.factor(autoArchetypesWithGroups$State)
+
+
+diff_df <- autoArchetypesWithGroups %>%
+    pivot_wider(names_from = State, values_from = c(One, Two, Three)) %>%
+    mutate(diff_One_FedFasted =  One_Fed - One_Fasted,
+         diff_Two_FedFasted = Two_Fed - Two_Fasted,
+         diff_Three_FedFasted = Three_Fed - Three_Fasted ,
+         diff_One_FastedVehFastedAlm = One_FastedAlm - One_FastedVeh ,
+         diff_Two_FastedVehFastedAlm = Two_FastedAlm - Two_FastedVeh ,
+         diff_Three_FastedVehFastedAlm = Three_FastedAlm - Three_FastedVeh) %>%
+         select(starts_with("diff_")) %>%
+    pivot_longer(cols = everything(), names_to = "State", values_to = "Delta") %>%
+    mutate(State = str_remove(State, "diff_")) %>%
+    separate(State, into = c("State", "Group"), sep = "_")
+
+
+# Change the Group column  so its Fed - Fasted instead of FedFasted
+diff_df$Group <- str_replace(diff_df$Group, "FedFasted", "Fasted -> Fed")
+diff_df$Group <- str_replace(diff_df$Group, "FastedVehFastedAlm", "FastedVeh -> FastedAlm")
+
+# Plot the delta of arachetypes across the groups with a ggplot box plot facted by group fill by state
+ggplot(diff_df, aes(x = State, y = Delta, fill = State)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  facet_wrap(~Group) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "State", y = "Delta", fill = "State") +	
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") + 
+    ggtitle("Delta Boxplot: autogenerated archetypes")
+
+
+```
+
+```{r plot Archetypal Ana}
+
+# DONT TRUST THIS FUNCTION QUITE YET, NEEDS FURTHER TESTING
+
+create_diff_df <- function(df, archetype_list) {
+  pairs_to_calculate_diff <- list(c("Fed", "Fasted"), c("FastedAlm", "FastedVeh"))
+  
+  diff_df <- df %>%
+    pivot_wider(names_from = State, values_from = archetype_list) 
+  
+  for (archetype in archetype_list) {
+    for (pair in pairs_to_calculate_diff) {
+      diff_df <- diff_df %>%
+        mutate(!!paste0("diff_", archetype, "_", paste(pair, collapse="")) := 
+                 .data[[paste0(archetype, "_", pair[1])]] - .data[[paste0(archetype, "_", pair[2])]])
+    }
+  }
+  
+  diff_df <- diff_df %>%
+    select(starts_with("diff_")) %>%
+    pivot_longer(cols = everything(), names_to = "State", values_to = "Delta") %>%
+    mutate(State = str_remove(State, "diff_")) %>%
+    separate(State, into = c("State", "Group"), sep = "_")
+  
+  return(diff_df)
+}
+diff_df <- create_diff_df(autoArchetypesWithGroups, c("One", "Two", "Three"))
+create_diff_df(archObsL2ScaleWithGroups, c("Circle","GO","Uncertainty"))
 
 ```
