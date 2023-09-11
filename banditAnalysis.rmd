@@ -17,258 +17,222 @@ library(ggplot2)
 ```{r helper functions}
 # Load helper functions
 source("banditAnalysis.r")
+source("banditDataProcessing.r")
+source("banditArchetypalAnalysis.r")
 
 ```
 
-```{r test stats functions}
-# Generate a synthetic experiment with the function above
-
-syntheticExperiment1 <- syntheticData(nTrials = 300,
-                                      LeftBias=0.75,
-                                      ProbBandicVec = setNames(c(0.8,0.8,0.8),c("AC>A","AB>A","BC>B")),
-                                      modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
-                                      timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
-                                      RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
-
-syntheticStats1 <- mouseExpStats(syntheticExperiment1[[1]],syntheticExperiment1[[2]],"Synthetic Experiment Test 1")
-```
-
-```{r try varying left bias}
-
-# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
-syntheticExperimentsLeftBias <- list()
-for(i in 1:100){
-    syntheticExperimentsTemp <- list()
-    for(j in 1:40){	
-        temp <- syntheticData(nTrials = 200,
-                                LeftBias=i/100, # VARY THE LEFT BIAS
-                                ProbBandicVec = setNames(c(0.5,0.5,0.5),c("AC>A","AB>A","BC>B")),
-                                modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
-                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
-                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
-        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i)) %>% unname()
-    }
-    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
-    syntheticExperimentsLeftBias[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
-}
-# Create a dataframe from the list of experiments
-syntheticExperimentsLeftBiasDF <- do.call(rbind.data.frame, syntheticExperimentsLeftBias) %>% readr::type_convert()
-colnames(syntheticExperimentsLeftBiasDF) <- names(syntheticStats1)
-
-
-```
-
-```{r try going from from random to optimal strategy}
-
-# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
-syntheticExperimentsOptimal <- list()
-for(i in 1:100){
-    syntheticExperimentsTemp <- list()
-    for(j in 1:40){	
-        temp <- syntheticData(nTrials = 200,
-                                LeftBias=0.5, # Keep the left Bias Stable (random)
-                                ProbBandicVec = setNames(c(1,1,1),c("AC>A","AB>A","BC>B")),
-                                modeProbVec = c(1-i/100,i/100,0), # LeftBias Opitmal Explorer
-                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
-                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
-        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i)) %>% unname()
-    }
-    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
-    syntheticExperimentsOptimal[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
-}
-# Create a dataframe from the list of experiments
-syntheticExperimentsOptimalDF <- do.call(rbind.data.frame, syntheticExperimentsOptimal) %>% readr::type_convert()
-colnames(syntheticExperimentsOptimalDF) <- names(syntheticStats1)
-
-
-```
-
-
-
-```{r test stats functions}
- # Plot some of the results from the synthetic experiments
- # Plot overlapped line plots for leftBias and probOfCircle
-syntheticExperimentsLeftBiasDF$leftBiasReal <- (1:100)/100
-syntheticExperimentsOptimalDF$OptimalStrategy <- (1:100)/100
-leftBiasPlot <- ggplot(syntheticExperimentsLeftBiasDF, aes(x=leftBiasReal)) + 
-                    geom_line(aes(y = ProbOfCircle, color = "Probility Of Circle")) +
-                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
-                    geom_line(aes(y = RewardProb, color = "Probability of Getting Reward")) +
-                    geom_line(aes(y = probDirectionChanges, color = "Probility of Direction Change")) +
-                    geom_line(aes(y = `banditChoiceProb_0.25>1`, color = "Probility 0.25>1")) +
-                    geom_line(aes(y = `banditChoiceProb_0.5>1`, color = "Probility 0.5>1")) +
-                    geom_line(aes(y = `banditChoiceProb_1>0.5`, color = "Probility 1>0.5")) +
-                    geom_line(aes(y = `ProbOfChoosing_1`, color = "Probility of choosing 1")) +
-                    geom_line(aes(y = `ProbOfChoosing_0.5`, color = "Probility of choosing 0.5")) +
-                    geom_line(aes(y = `ProbOfChoosing_0.25`, color = "Probility of choosing 0.25")) +
-                    labs(x = "Simulated Left Bias (Sanity Check)", y = "Probability") +
-                    theme_classic() + 
-                    scale_color_discrete(name = "Statistic")
-
-
-OptimalStratPlot <- ggplot(syntheticExperimentsOptimalDF, aes(x=OptimalStrategy)) + 
-                    geom_line(aes(y = ProbOfCircle, color = "Probility Of Circle")) +
-                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
-                    geom_line(aes(y = RewardProb, color = "Probability of Getting Reward")) +
-                    geom_line(aes(y = probDirectionChanges, color = "Probility of Direction Change")) +
-                    geom_line(aes(y = `banditChoiceProb_0.25>1`, color = "Probility of 0.25>1")) +
-                    geom_line(aes(y = `banditChoiceProb_0.5>1`, color = "Probility of 0.5>1")) +
-                    geom_line(aes(y = `banditChoiceProb_1>0.5`, color = "Probility of 1>0.5")) +
-                    geom_line(aes(y = `ProbOfChoosing_1`, color = "Probility of choosing 1")) +
-                    geom_line(aes(y = `ProbOfChoosing_0.5`, color = "Probility of choosing 0.5")) +
-                    geom_line(aes(y = `ProbOfChoosing_0.25`, color = "Probility of choosing 0.25")) +
-                    labs(x = "Probility Of Choosing Best Strat", y = "Probability") +
-                    theme_classic() + 
-                    scale_color_discrete(name = "Statistic")
-
-ggplot2::ggsave(paste0("./plots/OptimalStratPlot.pdf"),device = "pdf",OptimalStratPlot)
-ggplot2::ggsave(paste0("./plots/leftBiasPlot.pdf"),device = "pdf",leftBiasPlot)
-
-cowplot::plot_grid(leftBiasPlot, OptimalStratPlot, nrow = 2)
-
-```
-  
 
 ```{r read data loop}
 # Set the path to the hdf5 file
-datafile <- '/home/gummi/banditExperiment/dataset.data'
+datafile <- '/home/gummi/banditExperiment/data/dataset08212023.data'
 
 # Load the hdf5 file
 data <- h5dump(datafile,load=TRUE)
 
 # Compute experiment stats
-experimentData <- tabulateExperiments(data,datafile,2)
+experimentData <- tabulateExperiments(data,datafile,2,'/home/gummi/banditExperiment/RawTelemteryData')
+# Save experment Data
 
-```
-
-
-```{r explore data}
-# Use the features that Alex asked for
-TesmerFeatures <- c("ProbOfChoosing_0.25",
-                  "ProbOfChoosing_0.5",
-                  "ProbOfChoosing_1",
-                  "banditChoiceProb_0.25>1",
-                  "banditChoiceProb_1>0.5",
-                  "banditChoiceProb_0.5>1",
-                  "numberOfTrials",
-                  "ProbOfCircle")
-
-# Generate plots for whole probabalistic part
-plotPCAMouse(experimentData[["ProbExperimentsProbPart"]],
-            TesmerFeatures,
-            "SelectFeatures_EntireProbPart",
-            4,
-            0.8,
-            TRUE)
-
-# Generate plots for replicate collapsed whole probabalistic part
-plotPCAMouse(averageReplicates(experimentData[["ProbExperimentsProbPart"]]),
-            TesmerFeatures,
-            "SelectFeatures_ReplicateCollapsedProbPart",
-            3,
-            0.9,
-            FALSE)
-
-
-# Generate plots for second half of probabalistic part
-plotPCAMouse(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]],
-            TesmerFeatures,
-            "SelectFeatures_SecondHalfProbPart",
-            4,
-            0.8,
-            TRUE)
-
-# Generate plots for replicate collapsed second half of probabalistic part
-plotPCAMouse(averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]),
-            TesmerFeatures,
-            "SelectFeatures_ReplicateCollapsedSecondHalfProbPart",
-            4,
-            0.7,
-            FALSE)
-
-# Get the numeric columns of the data
-numericColumns <- sapply(experimentData[["ProbExperimentsProbPart"]],is.numeric)
-
-# Generate plots probabalistic part with all features that are numeric
-plotPCAMouse(experimentData[["ProbExperimentsProbPart"]],
-            names(numericColumns)[numericColumns][-1],
-            "AllFeatures_EntireProbPart",
-            4,
-            0.4,
-            FALSE)
-
-# Generate plots for replicate collapsed probabalistic part with all features that are numeric
-plotPCAMouse(averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]),
-            names(numericColumns)[numericColumns][-1],
-            "AllFeatures_SecondHalfProbPart",
-            4,
-            0.4,
-            FALSE)
-
-# Generate plots for replicate collapsed probabalistic part with all features that are numeric
-plotPCAMouse(averageReplicates(experimentData[["ProbExperimentsProbPart"]]),
-            names(numericColumns)[numericColumns][-1],
-            "AllFeatures_ReplicateCollapsedProbPart",
-            4,
-            0.4,
-            FALSE)
-
-# Generate plots for replicate collapsed probabalistic part with all features that are numeric
-
-# Filter out for only fasted mice
-averageReplicates(experimentData[["SplitProbExperiments"]][["Split_1050_1800"]]) %>%
-            filter(State == "Fasted") -> SecondHalfCollapsedFastedOnly
-
-plotPCAMouse(SecondHalfCollapsedFastedOnly,
-            TesmerFeatures,
-            "SelectFeatures_SecondHalfProbPart_FastedOnly",
-            4,
-            0.4,
-            FALSE)
-
-
-```
-
-
-
-```{r plot some stuff}
-
-DetData <- experimentData[["DetExperiments"]]      
-
-# Plot left choice probability boxplot fill by sex and faceted by state
-ggplot(DetData, aes(x = Sex,y=as.numeric(leftBias),fill=Sex)) + 
-        geom_boxplot() + 
-        theme_classic() +
-        labs(y = "Left Choice Probability",title = "Directional Bias") +
-        facet_wrap(.~State) 
-
-# Plot left choice probability boxplot fill by state and faceted by mouse
-ggplot(DetData, aes(x = as.factor(Mouse),y=as.numeric(leftBias),fill=Sex)) + 
-        geom_boxplot() + 
-        theme_classic() +
-        labs(y = "Left Choice Probability",title = "Directional Bias",x="Mouse")
-
-# Create a pivot of the pumb bias
-DetData %>%
-        dplyr::select(Mouse,
-                      State,
-                      Sex,
-                      ProbOfChoosing_A,
-                      ProbOfChoosing_B,
-                      ProbOfChoosing_C) %>%
-        tidyr::pivot_longer(cols = c("ProbOfChoosing_A",
-                                     "ProbOfChoosing_B",
-                                     "ProbOfChoosing_C"),
-                            names_to = "Pump",
-                            values_to = "Prob") %>%
-ggplot(aes(x = Pump,y=as.numeric(Prob),fill=Pump)) + 
-        geom_boxplot() + 
-        theme_classic() +
-        geom_hline(yintercept = 0.33,linetype="dashed") 
-        #facet_wrap(.~Mouse)
+save(experimentData,file=paste0("experimentData_",str_remove_all(Sys.Date(), "-"),".RData"))
+#load(paste0("experimentData_",str_remove_all(Sys.Date(), "-"),".RData"))
 
 
 
 ```
 
 
+```{r general data analysis}
+
+
+# Designate the variables of interest from the data set
+FeaturesOfIntrest <- c("P(0.25)",
+                    "P(0.5)",
+                    "P(1)",
+                    "P(0.25->1)",
+                    "P(1->0.5)",
+                    "P(0.5->1)",
+                    "P(Circle)")
+
+
+# Retrieve the data set of interest
+dataset <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] #"Split_1050_1800"  "Split_1300_1800"
+
+# Process the data set
+dataset$Mouse <- as.character(dataset$Mouse)
+
+colnames(dataset)[52] <- "RewardEvennes"
+
+dataset$RewardEvennes <- as.numeric(dataset$RewardEvennes)
+
+# Filter out any mice that have no trials (one drunk mice seems to have no trial past 5 minutes lol)
+dataset <- dataset %>%
+            filter(`NTrials` > 5)
+
+dataset <-  dataset %>%
+                 averageReplicates()
+
+# Change States to consider name DTR+ as separate state  (DTRplus cuz some metaprogramming fucntionality is not working with the + sign)
+dataset <- mutate(dataset, State = ifelse(MouseType == "DTR+", paste0(State,"DTRplus"), State))
+
+# Filter Out GCAMP
+dataset <- dataset %>%
+            filter(MouseType != "GCAMP")
+
+# Take only States that we are interested in (I think were completely dropping fed mice)
+dataset <- dataset %>%
+            filter(State %in% c("FastedEthDTRplus","FastedEth2DTRplus","FastedSalDTRplus",
+                                "FastedVehDTRplus","FastedAlm","FastedEth",
+                                "FastedEth2","FastedSal","FastedSnap","FastedVeh","Fasted"))
+
+
+
+
+plotPCAMouse(dataset,c(FeaturesOfIntrest,"meanTimeToChoice","NTrials"),"LastHalfData",6,0.5,FALSE,c("RewardEvennes"))
+
+
+```
+
+
+
+```{r archtypal analysis plots}
+
+
+
+
+# Define the adjency matrix for the predefined archetypal analysis
+archMat3 <- matrix(c(1/3, 1/3, 1/3, 0.5, 0.5, 0.5, 1,  # Circle 
+    	            0,   0.5, 0.5, 1,   1,   1,   0,  # GO
+                    0.5,   0.5,   0,   0,   1,   0,   0), # Uncertainty seeking (maybe better to change to uncertainty avoiding  0.5,   0,   0.5,   1,   0,   1,   0)
+                                                    nrow = 3,
+                                                     ncol = 7, 
+                                                     byrow = TRUE,
+                                                    dimnames = list( c("Circle","GO","Uncertainty"),
+                                                    FeaturesOfIntrest))
+
+archMat4 <- matrix(c(1/3, 1/3, 1/3, 0.5, 0.5, 0.5, 1,  # Circle 
+    	            0,   0.5, 0.5, 1,   1,   1,   0,  # GO
+                    0.5,   0.5,   0,    0,   1,   0,   0, # Uncertainty seeking (maybe better to change to uncertainty avoiding  0.5,   0,   0.5,   1,   0,   1,   0)
+                    0.5,   0,     0.5,  1,  0,   0.5,  0), # Certainty Seeking	
+                                                    nrow = 4,
+                                                     ncol = 7, 
+                                                     byrow = TRUE,
+                                                    dimnames = list( c("Circle","GO","Uncertainty","Certainty"),	
+                                                    FeaturesOfIntrest))
+
+# Designate the pairs of states to contrast in during plotting.
+contrastList <- list(c("FastedAlm", "FastedVeh"),
+                        c("FastedSnap", "FastedVeh"),
+                        c("FastedEth","FastedSal"),
+                        c("FastedEth2","FastedSal"),
+                        c("FastedEthDTRplus","FastedSalDTRplus"),
+                        c("FastedEth2DTRplus","FastedSalDTRplus")) 
+
+
+# Do classical archetypal analysis (do plotting for 4 archetypes) This will generate some plots
+AutoArchAnalysis <- autoArchetypesAnaPlots(dataset,"AutoFourArchetypes",4,c(FeaturesOfIntrest,"NTrials"),contrastList,FALSE) 
+
+# Archatypal analysis with the 3 predefined archetypes
+predefArchThree <- ArchAnalysisWithPredefined(archMat3,dataset,squareVec,TRUE,0.001,TRUE,TRUE,FALSE,"PredefThree",FeaturesOfIntrest,contrastList)
+predefArchThree[["error"]]
+predefThreePlots <- plotArchetypalAnalysisPredefined(TRUE,contrastList,predefArchThree[[1]],"PredefThree",archMat3)
+
+# Archatypal analysis with 4 predefined archetypes
+predefArchFour <- ArchAnalysisWithPredefined(archMat4,dataset,squareVec,TRUE,0.001,TRUE,TRUE,FALSE,"PredefFour",FeaturesOfIntrest,contrastList)
+predefArchFour[["error"]]
+predefFourPlots <- plotArchetypalAnalysisPredefined(FALSE,contrastList,predefArchFour[[1]],"PredefFour",archMat4)
+
+
+
+
+```
+
+
+```{r archtypal analysis plots}
+# Plot pca of archetypes
+
+pcaArchs <- prcomp(predefArchFour[[1]][,1:4],center = TRUE,scale. = TRUE)
+
+ggplot(cbind(pcaArchs$x,predefArchFour[[1]][,6:8]),aes(x = PC1, y = PC2, color = State)) +
+        geom_point() +
+        theme_bw() + 
+        guides(color = guide_legend(override.aes = list(label = NULL)))
+
+
+```
+
+```{r generate plots}
+
+# Create a function for plotting scatterplots with corr 
+
+scatterWrapper <- function(archData,archtypesNames,variableOFInterest,name) {
+    tempDF <- pivot_longer(archData,cols = archtypesNames,names_to = "Archs",values_to = "Value")
+    plot <- ggpubr::ggscatter(tempDF,x = "Value", y = variableOFInterest,add = "reg.line",conf.int = T,cor.coef = T) +
+            facet_grid(State~Archs ,scales = "free_x") +
+            ggtitle(name) + 
+            theme_bw() 
+
+    return(plot)
+}
+
+dataArchComb <- cbind(predefArchFour[[1]],dataset)
+
+scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"rewardPerDistance", "Reward per Distance")
+
+scatterWrapper(dataArchComb,c("P(0.25)","P(0.5)","P(1)","P(Circle)","P(DirectionChange)"),"rewardPerDistance", "Reward per Distance")
+
+scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"totalDistance", "Total Distance")
+
+scatterWrapper(dataArchComb,c("P(0.25)","P(0.5)","P(1)","P(Circle)"),"totalDistance", "Total Distance")
+
+scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"RewardEvennes", "Reward Evennes")
+
+
+
+scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"meanTimeToChoice", "Mean time to choice")
+
+ggpubr::ggscatter(dataset,x = "NTrials", y = "totalDistance",add = "reg.line",conf.int = T,cor.coef = T)
+
+group_by(duplicated(dataArchComb),State) %>% select(meanTimeToChoice)%>% summarise(mean())
+
+reps<- predefFourPlots[["representations"]]
+
+tempDF <- reps[[3]]
+
+tempDF$rewardPerDistance <- dataset$rewardPerDistance
+	
+ggplot() +
+        geom_point(data = tempDF,aes(x = PC1, y = PC2, color =dataset$rewardPerDistance)) +
+        scale_color_gradient(low = "lightgray", high = "red") +
+        geom_text(data = reps[[4]],aes(x = PC1, y = PC2, label = Archs)) + 
+        theme_bw() + 
+        guides(color = guide_legend(override.aes = list(label = NULL))) 
+
+
+
+
+
+```
+
+ 
+
+
+
+
+```{r helper functions}
+# Load helper functions
+source("banditAnalysis.r")
+source("banditDataProcessing.r")
+source("banditArchetypalAnalysis.r")
+
+```
+
+```{r addd}
+
+t.test(Circle ~ State,data = dataArchComb[which(dataArchComb$State %in% c("FastedVeh","FastedAlm")),])
+t.test(GO ~ State,data = dataArchComb[which(dataArchComb$State %in% c("FastedVeh","FastedAlm")),])
+t.test(Uncertainty ~ State,data = dataArchComb[which(dataArchComb$State %in% c("FastedVeh","FastedAlm")),])
+t.test(Certainty ~ State,data = dataArchComb[which(dataArchComb$State %in% c("FastedVeh","FastedAlm")),])
+
+
+```
