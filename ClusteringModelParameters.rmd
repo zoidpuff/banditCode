@@ -1,0 +1,372 @@
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(ggplot2)
+
+```
+
+```{r }
+# Load the data from the xlsx file
+data <- readxl::read_excel("/home/gummi/banditExperiment/Mouse_Parameters.xlsx")
+
+```
+
+```{r }
+# Plot the data with a pairplot
+graphics::pairs(data[,3:6], pch = 21, col = c("red", "green", "blue", "yellow")[as.factor(data$State)], bg = c("red", "green", "blue", "yellow")[as.factor(data$State)])
+
+```
+
+
+```{r }
+# Perfom dimensionality reduction with PCA and umap and plot the results
+
+# PCA
+pca <- prcomp(data[,3:6], center = TRUE, scale. = TRUE)
+pca_df <- as.data.frame(pca$x)
+pca_df$State <- data$State
+pcaPlot <- ggplot(pca_df, aes(x = PC1, y = PC2, color = State)) + geom_point() + theme_bw() + ggtitle("PCA")
+
+# UMAP (loop over values of n_neighbors and min_dist to find the best parameters)
+
+#umaps <- list()
+#for(i in 2:10){
+#  for(j in c(1:9)/10){
+#    umap <- umap::umap(data[,3:6], n_neighbors = i, min_dist = j, metric = "euclidean")
+#    umap_df <- as.data.frame(umap$layout)
+#    umap_df$State <- data$State
+#    umapPlot <- ggplot(umap_df, aes(x = V1, y = V2, color = State)) + 
+#                geom_point() + 
+#                theme_bw() + 
+#                ggtitle( "", subtitle = paste0("UMAP", " n_neighbors = ", i, " min_dist = ", j)) +
+#                guides(color = FALSE)
+#    umaps[[paste0("n_neighbors = ", i, " min_dist = ", j)]] <- umapPlot
+#  }
+#}
+
+#gridExtra::grid.arrange(grobs = umaps, ncol = 10)
+
+umap <- umap::umap(data[,3:6], n_neighbors = 5, min_dist = 0.1, metric = "euclidean")
+umap_df <- as.data.frame(umap$layout)
+umap_df$State <- data$State
+umapPlot <- ggplot(umap_df, aes(x = V1, y = V2, color = State)) + geom_point() + theme_bw() + ggtitle("UMAP n_neighbors = 5 min_dist = 0.1")
+
+
+# Plot the two plots
+gridExtra::grid.arrange(pcaPlot, umapPlot, ncol = 2)
+
+
+```
+
+
+```{r }
+ 
+################# Hierarchical clustering ###########
+nclusts <- 3
+
+# Calculate the distance matrix
+distMatrix <- dist(data[,3:6], method = "euclidean")
+
+
+# Perform the clustering
+hc <- hclust(distMatrix, method = "ward.D2")
+
+# Cut the tree into n clusters
+hc_clusters <- cutree(hc, k = nclusts)
+
+dend_obj <- as.dendrogram(hc)
+col_dend <- dendextend::color_branches(dend_obj, k = nclusts)
+#plot(col_dend)
+
+# Plot the clustered heatmap with pheatmap
+
+annotation <- data.frame(State = data$State,
+                        Cluster = as.factor(hc_clusters),
+                        row.names = rownames(data))
+
+pheatmap::pheatmap(distMatrix,
+                cluster_rows = TRUE,
+                cluster_cols = TRUE,
+                main = "Clustered heatmap of euclidean distance matrix",
+                clustering_method = "ward.D2",
+                annotation_col = annotation,
+                annotation_row = annotation,
+                show_rownames = FALSE,
+                show_colnames = FALSE)
+
+
+```
+
+
+```{r }
+# Perform k-means clustering
+kmeans <- kmeans(data[,3:6], centers = nclusts, nstart = 25)
+
+# Get the clusters
+k_means_clusters <- as.factor(kmeans$cluster)
+
+
+ggplot(pca_df,aes(x = PC1, y = PC2, color = k_means_clusters, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle(paste0("PCA", ", Number of Clusters  = ", nclusts)) + 
+                                                guides(shape = FALSE) + 
+                                                guides(color = FALSE)
+
+ggplot(umap_df,aes(x = V1, y = V2, color = k_means_clusters, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle(paste0("UMAP", ", Number of Clusters  = ", nclusts)) + 
+                                                guides(shape = FALSE) +
+                                                guides(color = FALSE)
+
+# Compute the mean values for the different variables in each cluster
+cluster_means <- aggregate(data[,3:6], by = list(k_means_clusters), FUN = mean)
+
+# Compute the what percentile a a mean value is in for each variable in each cluster
+
+cluster_percentiles <- cluster_means
+for (i in 1:4){ # Variable
+    tempFunc <- ecdf(unname(unlist(data[,i+2])))
+    for(j in 1:3){ # Cluster
+        cluster_percentiles[j,i+1] <- tempFunc(cluster_means[j,i+1])
+    } 
+}
+
+colnames(cluster_percentiles)[1] <- "Cluster"
+
+pivot_longer(cluster_percentiles, cols = c("RW_Alpha","RW_Beta","CK_Alpha","CK_Beta"), names_to = "Variable", values_to = "Value") %>%
+    ggplot(aes(x = Variable, y = Value,fill = Variable)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    facet_wrap(~Cluster,ncol = 1) +
+    theme_classic()
+
+
+
+```
+
+
+```{r }
+# Plot the clusters with pair plots
+#plot(data[,3:6], col = c("red", "green", "blue", "yellow")[hc_clusters], pch = 21,
+#        bg = c("red", "green", "blue", "yellow")[hc_clusters],
+#         main = "Hierarchichal Clusters")
+
+
+#plot(data[,3:6], col = c("red", "green", "blue", "yellow")[k_means_clusters], pch = 21,
+#        bg = c("red", "green", "blue", "yellow")[k_means_clusters],
+#         main = "K-Means Clusters")
+
+
+
+# Plot the clusters with PCA and UMAP
+
+kmeansPlots <- list()
+hcPlots <- list()
+
+
+
+for(i in 2:7){
+    n_clusters <- i
+    kmeans <- kmeans(data[,3:6], centers = n_clusters, nstart = 25)
+    hc_clusters <- cutree(hc, k = n_clusters)
+
+    # Add the current cluster assignments as a new column in pca_df and umap_df
+    pca_df$current_cluster <- as.factor(kmeans$cluster)
+    umap_df$current_cluster <- as.factor(kmeans$cluster)
+  
+    kmeansPlots[[paste0("PCA n_clusters = ", n_clusters)]]  <- ggplot(pca_df,
+                                                aes(x = PC1, y = PC2, color = current_cluster, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle(paste0("PCA", ", Number of Clusters  = ", n_clusters)) + 
+                                                guides(shape = FALSE) + 
+                                                guides(color = FALSE)
+
+    kmeansPlots[[paste0("UMAP n_clusters = ", n_clusters)]] <- ggplot(umap_df,
+                                                aes(x = V1, y = V2, color = current_cluster, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle("UMAP") + 
+                                                guides(shape = FALSE) +
+                                                guides(color = FALSE)
+
+    pca_df$current_cluster <- as.factor(hc_clusters)
+    umap_df$current_cluster <- as.factor(hc_clusters)
+    
+
+
+    hcPlots[[paste0("PCA n_clusters = ", n_clusters)]]  <- ggplot(pca_df,
+                                                aes(x = PC1, y = PC2, color = current_cluster, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle(paste0("PCA", ", Number of Clusters  = ", n_clusters)) + 
+                                                guides(shape = FALSE) +
+                                                guides(color = FALSE)
+
+    hcPlots[[paste0("UMAP n_clusters = ", n_clusters)]]  <- ggplot(umap_df, 
+                                                aes(x = V1, y = V2, color = current_cluster, shape = State)) +
+                                                geom_point() +
+                                                theme_bw() +
+                                                ggtitle("UMAP") + 
+                                                guides(shape = FALSE) + 
+                                                guides(color = FALSE)
+    
+
+    
+}
+
+# Plot grid of plots
+gridExtra::grid.arrange(grobs = kmeansPlots, ncol = 2)
+gridExtra::grid.arrange(grobs = hcPlots, ncol = 2)
+
+```
+
+
+```{r }
+
+# Find outliers in data based in deviation from the mean
+
+remove_outliers <- function(df,mads) {
+  # create a logical vector to store which rows are outliers
+  is_outlier <- rep(FALSE, nrow(df))
+
+  for(col in names(df)) {
+    if (is.numeric(df[[col]])) { # only apply this to numeric columns
+      # calculate mean and standard deviation
+      mean_col <- mean(df[[col]], na.rm = TRUE)
+      sd_col <- sd(df[[col]], na.rm = TRUE)
+      
+      # find indexes of rows with outliers in this column
+      outlier_indexes <- abs(df[[col]] - mean_col) > mads*sd_col
+      
+      # combine with the existing vector
+      is_outlier <- is_outlier | outlier_indexes
+    }
+  }
+
+  # remove rows that have been marked as outliers
+  df_clean <- df[!is_outlier, ]
+
+  return(df_clean)
+}
+
+data_no_outliers <- remove_outliers(data, 3)
+data <- data_no_outliers
+
+
+# Do the archetypal analysis
+
+library(archetypes)
+
+# Get the archetypes
+
+archs <- stepArchetypes(data[,3:6],k = 2:6,nrep = 10)
+
+screeplot(archs)
+
+best <- bestModel(archs)
+
+barplot(best[[2]], as.matrix(data[,3:6]),percentile= TRUE)
+
+dataForTern <- as.data.frame(coef(best[[2]],'alphas'))
+
+colnames(dataForTern) <- c("AT1", "AT2", "AT3")	
+
+dataForTern$State <- factor(data$State,levels = c("FastedVeh", "FastedAlm","FastedSnap"))
+dataForTern$Mouse <- data$Mouse
+
+quickTernPlot <- function(datas,lines = TRUE) {
+   
+    temp <- ggtern::ggtern(data = arrange(datas,State),
+                    aes(x = AT1, y = AT2, z = AT3,color = State,group = Mouse)) + 
+                    geom_point() + 
+                    ggtern::theme_rgbw() +
+                    ggtern::theme_hidegrid() + 
+                    ggtern::theme_zoom_center(x = 1.05)
+
+    if(lines) {
+                temp <- temp + geom_line(arrow = arrow(length=unit(0.3,"cm"),
+                    ends="last", type = "open"),
+                    color = "#000000",
+                    alpha=0.2) 
+            }
+
+    return(temp)
+
+}
+
+
+quickTernPlot(filter(dataForTern, State != "FastedSnap"))
+
+quickTernPlot(filter(dataForTern, State != "FastedAlm"))
+
+
+quickBoxPlot <- function(datas) {
+
+        datasPivot <- pivot_longer(datas, cols = c("AT1", "AT2", "AT3"), names_to = "Archetype", values_to = "Value") 
+
+        archBoxPlot <- ggplot(datasPivot, aes(x = Archetype, y = Value, fill = State)) +
+                        geom_boxplot(outlier.alpha = 0, position = position_dodge(width = 0.75)) +
+                        geom_jitter(position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.75), size=1, alpha=0.3) +
+                        theme_classic()	+ 
+                        theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+    return(archBoxPlot)
+}
+
+
+        datasPivot <- pivot_longer(data, cols = colnames(data)[3:6], names_to = "Vars", values_to = "Value") 
+
+        archBoxPlot <- ggplot(datasPivot, aes(x = Vars, y = Value, fill = State)) +
+                        geom_boxplot(outlier.alpha = 0, position = position_dodge(width = 0.75)) +
+                        geom_jitter(position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.75), size=1, alpha=0.3) +
+                        theme_classic()	+ 
+                        theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+quickBoxPlot(dataForTern)
+
+vars <- colnames(data)[3:6]
+bestArchetypes <- bestModel(archs)[[3]]
+
+par(mfrow=c(4,4))
+    for(i in 1:4){
+        for(j in 1:4){
+            # If diagonal plot text thats TesmerFeature[i]
+            if(i == j) {
+                plot.new()
+                text(0.5,0.5,vars[i])
+            } else {
+            bestArchetypes$archetypes <- bestModel(archs)[[3]]$archetypes[,c(i,j)]
+            #bestArchetypes$archetypes <- bestArchetypesbu$archetypes[,c(i,j)]
+            xyplot(bestArchetypes, data[,c(i+2,j+2)],cex = 0.5)
+            }
+        }
+    }
+
+arch_percentiles <- as.data.frame(bestModel(archs)[[2]]$archetypes)
+for (i in 1:4){ # Variable
+    tempFunc <- ecdf(unname(unlist(data[,i+2])))
+    for(j in 1:3){ # Archetype
+        arch_percentiles[j,i] <- tempFunc(arch_percentiles[j,i])
+    } 
+}
+
+arch_percentiles$Archtype <- c("AT1", "AT2", "AT3")
+
+pivot_longer(arch_percentiles, cols = c("RW_Alpha","RW_Beta","CK_Alpha","CK_Beta"), names_to = "Variable", values_to = "Value") %>%
+    ggplot(aes(x = Variable, y = Value,fill = Variable)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    facet_wrap(~Archtype,ncol = 1) +
+    theme_classic()
+
+```
+
+
+
+
+
+
+```

@@ -1,0 +1,132 @@
+
+
+---
+title: "Bandit synthetic Data"
+output: github_document
+---
+
+Read in the data and store it as a data frame
+
+```{r setup, include=FALSE}
+
+library(rhdf5)
+library(tidyverse)
+library(ggplot2)
+
+```
+
+
+```{r helper functions}
+# Load helper functions
+source("banditAnalysis.r")
+
+```
+
+```{r test stats functions}
+# Generate a synthetic experiment with the function above
+
+syntheticExperiment1 <- syntheticData(nTrials = 300,
+                                      LeftBias=0.75,
+                                      ProbBandicVec = setNames(c(0.8,0.8,0.8),c("AC>A","AB>A","BC>B")),
+                                      modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
+                                      timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                      RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+
+syntheticStats1 <- mouseExpStats(syntheticExperiment1[[1]],syntheticExperiment1[[2]],"Synthetic Experiment Test 1")
+```
+
+```{r try varying left bias}
+
+# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
+syntheticExperimentsLeftBias <- list()
+for(i in 1:100){
+    syntheticExperimentsTemp <- list()
+    for(j in 1:100){	
+        temp <- syntheticData(nTrials = 250,
+                                LeftBias=i/100, # VARY THE LEFT BIAS
+                                ProbBandicVec = setNames(c(0.5,0.5,0.5),c("AC>A","AB>A","BC>B")),
+                                modeProbVec = c(1,0,0), # LeftBias Opitmal Explorer
+                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i),FALSE) %>% unname()
+    }
+    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
+    syntheticExperimentsLeftBias[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
+}
+# Create a dataframe from the list of experiments
+syntheticExperimentsLeftBiasDF <- do.call(rbind.data.frame, syntheticExperimentsLeftBias) %>% readr::type_convert()
+colnames(syntheticExperimentsLeftBiasDF) <- names(syntheticStats1)
+
+
+```
+
+```{r try going from from random to optimal strategy}
+
+# Create 100 synthetic experiments and compute their stats and save it as a dataframe 
+syntheticExperimentsOptimal <- list()
+for(i in 1:100){
+    syntheticExperimentsTemp <- list()
+    for(j in 1:100){	
+        temp <- syntheticData(nTrials = 250,
+                                LeftBias=0.5, # Keep the left Bias Stable (random)
+                                ProbBandicVec = setNames(c(1,1,1),c("AC>A","AB>A","BC>B")),
+                                modeProbVec = c(0,i/100,1-i/100), #  Explorer to optimal
+                                timePerBandit = setNames(c(10,10,10,10,10,10),c("AC>A","AC>C","AB>A","AB>B","BC>B","BC>C")),
+                                RewardProbPerStation = setNames(c(1,0.5,0.25),c("A","B","C")))
+        syntheticExperimentsTemp[[j]] <- mouseExpStats(temp[[1]],temp[[2]],paste0("Synthetic Experiment ",i),FALSE) %>% unname()
+    }
+    # create a dataframe from the list of vectors and compute the column means, then add that to the list of experiments
+    syntheticExperimentsOptimal[[i]] <- do.call(rbind.data.frame, syntheticExperimentsTemp) %>% colMeans(na.rm=FALSE) %>% unlist()
+}
+# Create a dataframe from the list of experiments
+syntheticExperimentsOptimalDF <- do.call(rbind.data.frame, syntheticExperimentsOptimal) %>% readr::type_convert()
+colnames(syntheticExperimentsOptimalDF) <- names(syntheticStats1)
+
+
+```
+
+
+
+```{r test stats functions}
+ # Plot some of the results from the synthetic experiments
+ # Plot overlapped line plots for leftBias and probOfCircle
+syntheticExperimentsLeftBiasDF$leftBiasReal <- (1:100)/100
+syntheticExperimentsOptimalDF$OptimalStrategy <- (1:100)/100
+leftBiasPlot <- ggplot(syntheticExperimentsLeftBiasDF, aes(x=leftBiasReal)) + 
+                    geom_line(aes(y = `P(Circle)`, color = "P(Circle)")) +
+                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
+                    geom_line(aes(y = `P(Reward)`, color = "P(Reward)")) +
+                    geom_line(aes(y = `P(DirectionChange)`, color = "P(Direction Change)")) +
+                    geom_line(aes(y = `P(0.25->1)`, color = "P(0.25->1)")) +
+                    geom_line(aes(y = `P(1)`, color = "P(1)")) +
+                    geom_line(aes(y = `P(0.5)`, color = "P(0.5)")) +
+                    geom_line(aes(y = `P(0.25)`, color = "P(0.25)")) +
+                    labs(x = "Simulated Direction Bias", y = "Probability") +
+                    theme_classic() + 
+                    geom_vline(xintercept = 0.5, linetype="dashed") +
+                    scale_color_discrete(name = "Statistic")
+
+
+OptimalStratPlot <- ggplot(syntheticExperimentsOptimalDF, aes(x=OptimalStrategy)) + 
+                    geom_line(aes(y = `P(Circle)`, color = "P(Circle)")) +
+                    geom_line(aes(y = leftBias, color = "Left Bias")) + 
+                    geom_line(aes(y = `P(Reward)`, color = "P(Reward)")) +
+                    geom_line(aes(y = `P(DirectionChange)`, color = "P(Direction Change)")) +
+                    geom_line(aes(y = `P(0.25->1)`, color = "P(0.25->1)")) +
+                    geom_line(aes(y = `P(0.5->1)`, color = "P(0.5->1)")) +
+                    geom_line(aes(y = `P(1->0.5)`, color = "P(1->0.5)")) +
+                    geom_line(aes(y = `P(1)`, color = "P(1)")) +
+                    geom_line(aes(y = `P(0.5)`, color = "P(0.5)")) +
+                    geom_line(aes(y = `P(0.25)`, color = "P(0.25)")) +
+                    labs(x = "Uncertainty Seeking to GO", y = "Probability") +
+                    geom_vline(xintercept = 0.5, linetype="dashed") +
+                    theme_classic() + 
+                    scale_color_discrete(name = "Statistic")
+
+ggplot2::ggsave(paste0("./plots/OptimalStratPlotNEW.pdf"),device = "pdf",OptimalStratPlot,width = 8, height = 6)
+ggplot2::ggsave(paste0("./plots/leftBiasPlotNEW.pdf"),device = "pdf",leftBiasPlot,width = 8, height = 6)
+
+cowplot::plot_grid(leftBiasPlot, OptimalStratPlot, nrow = 2)
+
+```
+  
