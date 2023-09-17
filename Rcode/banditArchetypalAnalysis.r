@@ -22,16 +22,60 @@ closeVal <- function(val,vec) {
     return(vec[which.min(abs(vec - val))])
 }
 
+archetypesNNLS <- function(archeMat,data,bigM = 200) {
+        
+        ##### COMPUTE ALPHAS WITH NNLS #####
+
+    # Initialize the matrix of alphas
+    alphas <- matrix(0,nrow = nrow(data), ncol = nrow(archeMat))
+
+    # Scale the data matrix and store the scaling factors to use on archetypes matrix
+    scaledData <- scale(data)
+
+    # Add constraint dummy variable to the data matrix
+    scaledDataDummy <- cbind(scaledData,bigM)
+
+    # Scale the archetypes matrix with the same scaling factors as the data matrix
+    scaledArchMat <- scale(archeMat,
+                        center = attr(scaledData,"scaled:center"),
+                        scale = attr(scaledData,"scaled:scale"))
+    
+    # Add big M constraint dummy variable to the archetypes matrix
+    scaledArchMatDummy <- cbind(scaledArchMat,bigM)
+
+    # For each data point compute the alphas
+    for(i in 1:nrow(scaledData)) {
+        alphas[i,] <- coef(nnls::nnls(t(scaledArchMatDummy),scaledDataDummy[i,]))
+    }
+
+    # Compute the RSS
+    Approx <-  t(archeMat) %*% t(alphas)
+    RSS <- sum((Approx - t(data))^2)
+
+    # Convert the alphas to a dataframe
+    alphas <- alphas %>% as.data.frame()
+
+    colnames(alphas) <- rownames(archeMat)
+
+    return(list(alphas,RSS))
+}
+
+
+##############
+# OLD method #
+##############
 
 # Find  "optimal" alphas with gridsearch with some given archtypes matrix and data matrix. Specify a certain resolution and loss to use. 
 archtypesGridSearch <- function(archeMat, resolution = 0.001, data, mouseData, lossFunction,scaling,returnHeatmap = FALSE,takeSqrt = TRUE,dataSetName = "NA") {
-    
+
+     ### OLD GRIDSEARCH CODE ####
+
     # Transpose the archetypes for lin alg reasons
     tarcheMat <- t(archeMat)
 
     # Initialize the matrix of alphas
     alphas <- matrix(0,nrow = ncol(tarcheMat), ncol = nrow(data))
-    
+
     # Scale the data matrix and store the scaling factors to use on archetypes matrix
     ## This is so that features are of the same scale and contribute equally to the loss function
     if(scaling) {
@@ -70,6 +114,8 @@ archtypesGridSearch <- function(archeMat, resolution = 0.001, data, mouseData, l
         allcombs2 <- do.call(rbind, matrixList)
         allcombs <- allcombs2
     }
+
+
 
     # Initialize the list of heatmaps
     heatPlots <- list()
@@ -122,6 +168,8 @@ archtypesGridSearch <- function(archeMat, resolution = 0.001, data, mouseData, l
     return(list(alphas,errorTotal/nrow(data)))
     
 }
+
+
 
 #############################################################################################
 # # # # # # # # # # # # # # # # Plotting Functions  # # # # # # # # # # # # # # # # # # # # #
@@ -315,6 +363,7 @@ lowDimPlottingFunc <- function(dataMatNumeric, dataMatMeta, archeTypeMat,archety
     # Create plot of PCA with archetypes specially marked
     pcaPlotLarbe <- ggplot() +
                 geom_point(data = masterDFpca,aes(x = PC1, y = PC2, color = State)) +
+                stat_ellipse(data = masterDFpca,aes(x = PC1, y = PC2, color = State)) +
                 facet_wrap(.~ExperimentGroup,ncol = 3) +
                 geom_text(data = archetypesPCA,aes(x = PC1, y = PC2, label = Archs)) + 
                 theme_bw() + 
@@ -340,6 +389,7 @@ lowDimPlottingFunc <- function(dataMatNumeric, dataMatMeta, archeTypeMat,archety
                 geom_point(data = masterDFumap,aes(x = V1, y = V2, color = State)) +
                 facet_wrap(.~ExperimentGroup,ncol = 3) +
                 geom_text(data = archetypesUMAP,aes(x = V1, y = V2, label = Archs)) + 
+                stat_ellipse(data = masterDFumap,aes(x = V1, y = V2, color = State)) +
                 theme_bw() + 
                 guides(color = guide_legend(override.aes = list(label = NULL))) +
                 xlab("UMAP1") +
@@ -573,15 +623,10 @@ autoArchetypesAnaPlots <- function(dataMat,dataSetName,kInterest,featurs,contras
 
 ArchAnalysisWithPredefined <- function(archMats,
                                         dataMat,
-                                        lossFunc,
-                                        scale,
-                                        resolu,
-                                        takeSq,
-                                        useObsVals,
-                                        makeLossPlots,
                                         dataSetName,
                                         featurs,
-                                        contrasts) {
+                                        contrasts,
+                                        useObsVals) {
 
     # Separate dataframes (cuz dumb)
     dataMatNumeric <- dataMat %>%
@@ -612,18 +657,20 @@ ArchAnalysisWithPredefined <- function(archMats,
 
     plotScatterMatrixForArchetypes(bestArchetypes,archMats,dataMatNumeric,featurs,dataSetName,"PredefArchMatrixScatterPlot")
 
-    # Compute the alphas for each mouse with grid search func
-    gridSearchArches <- archtypesGridSearch(archeMat = archMats,
-                                resolution = resolu,
-                                data = dataMatNumeric,
-                                mouseData = dataMatMeta,
-                                lossFunction = lossFunc,
-                                scaling = scale,
-                                returnHeatmap = makeLossPlots,
-                                takeSqrt = takeSq,
-                                dataSetName = dataSetName)
+    ## Compute the alphas for each mouse with grid search func
+    #gridSearchArches <- archtypesGridSearch(archeMat = archMats,
+    #                            resolution = resolu,
+    #                            data = dataMatNumeric,
+    #                            mouseData = dataMatMeta,
+    #                            lossFunction = lossFunc,
+    #                            scaling = scale,
+    #                            returnHeatmap = makeLossPlots,
+    #                            takeSqrt = takeSq,
+    #                            dataSetName = dataSetName)
 
-    gridSearchArchesWGroups <- cbind(gridSearchArches[[1]],dataMatMeta[,c("MouseType","Mouse","State","Sex")])
+    Alphas <- archetypesNNLS(archeMat = archMats, data = dataMatNumeric)
+
+    AlphasWGroups <- cbind(Alphas[[1]],dataMatMeta[,c("MouseType","Mouse","State","Sex")])
 
     plotArchTypesMatrix(archMats,"ArchetypesHeatmap",featurs,dataSetName)
 
@@ -633,7 +680,8 @@ ArchAnalysisWithPredefined <- function(archMats,
                     rownames(archMats),
                     dataSetName,"OrgVals",
                     contrasts,
-                    gridSearchArchesWGroups)
+                    AlphasWGroups)
+
         plotArchTypesMatrix(archMatsOld,"ArchetypesHeatmapIntededValues",featurs,dataSetName)	
     }
 
@@ -643,17 +691,17 @@ ArchAnalysisWithPredefined <- function(archMats,
                     rownames(archMats),
                     dataSetName,"",
                     contrasts,
-                    gridSearchArchesWGroups)
+                    AlphasWGroups)
 
 
 
-    return(list(gridSearchArchesWGroups,"error" = gridSearchArches[[2]],"representations" = representations))
+    return(list(AlphasWGroups,"error" = Alphas[[2]],"representations" = representations))
     }
 
 
 plotArchetypalAnalysisPredefined <- function(plotTern = TRUE,
                                    contrasts,
-                                   gridSearchArchesWGroups,
+                                   AlphasWGroups,
                                    dataSetName,
                                    archMats
                     ) {
@@ -663,8 +711,8 @@ plotArchetypalAnalysisPredefined <- function(plotTern = TRUE,
     if(plotTern) {
         # Create a List of Ternary Plots
         for(i in 1:length(contrasts)) {
-            ternPlots[[i]] <- plotTernaryWithArrows(gridSearchArchesWGroups[,c("Circle","GO","Uncertainty")],
-                            gridSearchArchesWGroups[,c("MouseType","Mouse","State","Sex")],
+            ternPlots[[i]] <- plotTernaryWithArrows(AlphasWGroups[,c("Circle","GO","Uncertainty")],
+                            AlphasWGroups[,c("MouseType","Mouse","State","Sex")],
                             contrasts[[i]],
                             1.1,
                             "State",
@@ -676,12 +724,12 @@ plotArchetypalAnalysisPredefined <- function(plotTern = TRUE,
 
     # PLot the delta plots (both delta between state and starting delta dependance on starting value)
 
-    diffPlot <- create_diff_plots(gridSearchArchesWGroups, rownames(archMats), "",contrasts)
+    diffPlot <- create_diff_plots(AlphasWGroups, rownames(archMats), "",contrasts)
     ggplot2::ggsave(paste0("./plots/",dataSetName,"/",dataSetName,"PredefinedArchtypesDeltaPlots.pdf"),device = "pdf",diffPlot[[1]],width = 12,height = 8)
     ggplot2::ggsave(paste0("./plots/",dataSetName,"/",dataSetName,"PredefinedArchtypesDeltaPlotsPoint.pdf"),device = "pdf",diffPlot[[2]],width = 10,height = 12)
 
     # Plot boxplot of the archetypes
-    archboxs <- plotBoxPlotOfArchtypes(gridSearchArchesWGroups,contrasts,dataSetName,rownames(archMats)) 
+    archboxs <- plotBoxPlotOfArchtypes(AlphasWGroups,contrasts,dataSetName,rownames(archMats)) 
     
 
     return(list("TernPlots" = ternPlots, "DeltaPlots" = diffPlot, "BoxPlots" = archboxs))

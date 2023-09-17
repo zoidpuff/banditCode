@@ -16,26 +16,30 @@ library(ggplot2)
 
 ```{r helper functions}
 # Load helper functions
-source("banditAnalysis.r")
-source("banditDataProcessing.r")
-source("banditArchetypalAnalysis.r")
+setwd("banditCode")
+source("Rcode/banditAnalysis.r")
+source("Rcode/banditDataProcessing.r")
+source("Rcode/banditArchetypalAnalysis.r")
+
+
 
 ```
 
 
 ```{r read data loop}
 # Set the path to the hdf5 file
-datafile <- '/home/gummi/banditExperiment/data/dataset08212023.data'
+datafile <- 'dataset11092023.data'
 
 # Load the hdf5 file
 data <- h5dump(datafile,load=TRUE)
 
 # Compute experiment stats
-experimentData <- tabulateExperiments(data,datafile,2,'/home/gummi/banditExperiment/RawTelemteryData')
+experimentData <- tabulateExperiments(data,datafile,2,'RawTelemteryDataLoessSmoothing')
 # Save experment Data
 
-save(experimentData,file=paste0("experimentData_",str_remove_all(Sys.Date(), "-"),".RData"))
-#load(paste0("experimentData_",str_remove_all(Sys.Date(), "-"),".RData"))
+save(experimentData,file=paste0("experimentData_",str_remove_all(datafile,".data"),".RData"))
+
+#load(paste0("experimentData_",str_remove_all(datafile,".data"),".RData"))
 
 
 
@@ -61,9 +65,8 @@ dataset <- experimentData[["SplitProbExperiments"]][["Split_1050_1800"]] #"Split
 # Process the data set
 dataset$Mouse <- as.character(dataset$Mouse)
 
-colnames(dataset)[52] <- "RewardEvennes"
-
-dataset$RewardEvennes <- as.numeric(dataset$RewardEvennes)
+# Make sure any column past column number 10 is numeric
+dataset[,8:ncol(dataset)] <- sapply(dataset[,8:ncol(dataset)],as.numeric)
 
 # Filter out any mice that have no trials (one drunk mice seems to have no trial past 5 minutes lol)
 dataset <- dataset %>%
@@ -87,11 +90,17 @@ dataset <- dataset %>%
 
 
 
-
-plotPCAMouse(dataset,c(FeaturesOfIntrest,"meanTimeToChoice","NTrials"),"LastHalfData",6,0.5,FALSE,c("RewardEvennes"))
+### NEEED TO FIX CV PLOTS BRRROOOOKKKEEENNNN
+plotPCAMouse(dataset,c(FeaturesOfIntrest,"meanTimeToChoice","NTrials"),"LastHalfData",6,0.5,TRUE,c("RewardEvennes"))
 
 
 ```
+
+
+
+
+
+
 
 
 
@@ -133,12 +142,12 @@ contrastList <- list(c("FastedAlm", "FastedVeh"),
 AutoArchAnalysis <- autoArchetypesAnaPlots(dataset,"AutoFourArchetypes",4,c(FeaturesOfIntrest,"NTrials"),contrastList,FALSE) 
 
 # Archatypal analysis with the 3 predefined archetypes
-predefArchThree <- ArchAnalysisWithPredefined(archMat3,dataset,squareVec,TRUE,0.001,TRUE,TRUE,FALSE,"PredefThree",FeaturesOfIntrest,contrastList)
+predefArchThree <- ArchAnalysisWithPredefined(archMat3,dataset,"PredefThree",FeaturesOfIntrest,contrastList,TRUE)
 predefArchThree[["error"]]
 predefThreePlots <- plotArchetypalAnalysisPredefined(TRUE,contrastList,predefArchThree[[1]],"PredefThree",archMat3)
 
 # Archatypal analysis with 4 predefined archetypes
-predefArchFour <- ArchAnalysisWithPredefined(archMat4,dataset,squareVec,TRUE,0.001,TRUE,TRUE,FALSE,"PredefFour",FeaturesOfIntrest,contrastList)
+predefArchFour <- ArchAnalysisWithPredefined(archMat4,dataset,"PredefFour",FeaturesOfIntrest,contrastList,TRUE)
 predefArchFour[["error"]]
 predefFourPlots <- plotArchetypalAnalysisPredefined(FALSE,contrastList,predefArchFour[[1]],"PredefFour",archMat4)
 
@@ -146,6 +155,181 @@ predefFourPlots <- plotArchetypalAnalysisPredefined(FALSE,contrastList,predefArc
 
 
 ```
+
+
+
+```{r rolling estimate}
+
+
+
+RollingEstimatesDataFrame <- gatherExperimentsRolling(experimentData[["RollingProbExperiments"]],c(FeaturesOfIntrest,
+                                                                                "ngramEntropy_3",
+                                                                                "ngramEntropy_4",
+                                                                                "ngramEntropy_5",
+                                                                                "meanTimeToChoice",
+                                                                                "RewardEvennes",
+                                                                                "totalDistance",
+                                                                                "rewardPerDistance",
+                                                                                "meanSpeed"))
+
+# Plot line graphs of the rolling estimate of P(1) with ggplot
+avargedData <- RollingEstimatesDataFrame %>%
+                group_by(MidTimePoint,Mouse,State,MouseType,Sex) %>%
+                summarise_if(is.numeric,mean) %>% ungroup()
+
+avargedData <- mutate(avargedData, State = ifelse(MouseType == "DTR+", paste0(State,"DTRplus"), State)) %>%
+                filter(MouseType != "GCAMP") %>%
+                filter(MidTimePoint > 400)
+
+filter(RollingEstimatesDataFrame,State == "FastedVeh") %>%
+ggplot(aes(x = MidTimePoint, y = `P(1)`, color = Day)) +
+        geom_line(alpha = 0.7) +
+        geom_smooth(data = avargedData,
+                        aes(x = MidTimePoint, y = `P(1)`),
+                        alpha=0.4,
+                        color = "#ff0000",
+                        method = "lm",
+                        linetype="dashed"
+                        ) +
+        theme_classic() + 
+        facet_wrap(~Mouse, ncol = 4) +
+        guides(color = "none")
+
+ggplot(avargedData) +
+        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
+                        alpha=0.4,
+                        method = "lm",
+                        se = FALSE,
+                        linetype="dotted"
+                        ) +
+        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
+                        alpha=0.4,
+                        method = "loess",
+                        se = FALSE,
+                        ) +
+        theme_classic() + 
+        xlab("Time (s)") +
+        guides(color = "none")
+
+####################
+
+getpval <- function (modelobject) {
+        if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
+        f <- summary(modelobject)$fstatistic
+        p <- pf(f[1],f[2],f[3],lower.tail=F)
+        attributes(p) <- NULL
+        return(p)
+}
+
+plotDifferencesTimeProgressionComparison <- function(avargedData,comparisonVec,varibleToCompare) {
+
+                datas <- filter(avargedData, State %in% comparisonVec)
+                datas$State <- factor(datas$State,levels = comparisonVec)
+                datas$Mouse <- as.character(datas$Mouse)
+                datas <- datas %>% mutate(TimeSegment = cut(MidTimePoint, breaks = 3))
+
+                datasFirst <- filter(datas, State == comparisonVec[1])	
+                datasSecond <- filter(datas, State == comparisonVec[2])
+
+                forumlaString <- paste0("`",varibleToCompare,"`", "~ MidTimePoint + State")
+                
+                comblmnosum <- lm(forumlaString,datas)
+                comblm <-summary(comblmnosum)
+
+                forumlaStringNoState <- paste0("`",varibleToCompare,"`", "~ MidTimePoint")
+                firstStatelm <- lm(forumlaStringNoState,datasFirst)
+                secondStatelm <- lm(forumlaStringNoState,datasSecond)
+
+
+                ratioOfCoeffcients <- coef(secondStatelm)[2]/coef(firstStatelm)[2]
+
+
+                p <- ggplot() +
+                geom_line(data = datas,
+                                aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"), group = "Mouse"),
+                                alpha = 0.1,
+                                size=1) +
+                geom_line(data = datas,stat="smooth",
+                        aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"), group = "TimeSegment"),
+                        color = "#ff0000",
+                        method = "lm",
+                        se = TRUE,
+                        size = 2) +
+                geom_smooth(data =datas,
+                        aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"), group = "TimeSegment"),
+                        color = "#ff0000",
+                        method = "lm",
+                        linetype="dashed",
+                        se = TRUE,
+                        size = 0.01) +
+                geom_line(data = datas, stat="smooth",
+                        aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`")),
+                        color = "#001aff",
+                        method = "loess",
+                        linetype="dashed",
+                        alpha=0.8,
+                        se = FALSE,
+                        size = 1) +  
+                theme_bw() + 
+                facet_wrap(~State, ncol = 2) +
+                ggpubr::stat_regline_equation(data = datas,
+                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"))) + 
+                ggpubr::stat_cor(data = datas,
+                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`")),label.x.npc = "middle") + 
+                xlab("Time (s)") +
+                guides(color = "none") + 
+                ggtitle(paste0(varibleToCompare, " : ", comparisonVec[1]," vs. ",comparisonVec[2]),
+                        subtitle = paste0("Significance P-value of Linear Model     = ",formatC(getpval(comblmnosum), format = "e", digits = 3),"     (",varibleToCompare," ~ Time + State )",
+                                        "\nSignificance P-value of Time Coefficent  = ", formatC(comblm$coefficients[2,4], format = "e", digits = 3),
+                                        "\nSignificance P-value of State Coefficent = ", formatC(comblm$coefficients[3,4], format = "e", digits = 3),
+                                        "\nRatio of Slopes: ",abs(round(ratioOfCoeffcients,3))))
+                return(p)
+
+ggsave("file.png",p,width = 10,height = 7)
+
+}
+
+plotFolder <- "plots/ComaparingStatesWithArchs"
+
+avargedData <- as.data.frame(avargedData)
+avargedData$Mouse <- as.character(avargedData$Mouse)
+
+timerSeriesArch <- ArchAnalysisWithPredefined(archMat4,avargedData,"TimeSeriesDataFourArchs",FeaturesOfIntrest,contrastList,TRUE)
+
+avargedDataWarchalphas <- cbind(timerSeriesArch[[1]][,rownames(archMat4)],avargedData) 
+
+featuresToCompare <- c(FeaturesOfIntrest,
+                        rownames(archMat4),
+                        "NTrials",
+                        "ngramEntropy_3",
+                        "ngramEntropy_4",
+                        "ngramEntropy_5",
+                        "meanTimeToChoice",
+                        "RewardEvennes",
+                        "totalDistance",
+                        "rewardPerDistance",
+                        "meanSpeed")
+
+contrastList <- list(   c("Fasted", "FastedVeh"),
+                        c("FastedVeh", "FastedAlm"),
+                        c("FastedVeh", "FastedSnap"),
+                        c("FastedSal","FastedEth"),
+                        c("FastedSal","FastedEth2"),
+                        c("FastedSalDTRplus","FastedEthDTRplus"),
+                        c("FastedSalDTRplus","FastedEth2DTRplus")) 
+
+
+
+
+for(i in 1:length(featuresToCompare)) {
+        for(j in 1:length(contrastList)) {
+                a <- plotDifferencesTimeProgressionComparison(avargedDataWarchalphas,contrastList[[j]],featuresToCompare[i])
+                ggsave(paste0(plotFolder,"/",featuresToCompare[i],"_",contrastList[[j]][1],"_",contrastList[[j]][2],".png"),a,width = 10,height = 7)
+        }
+}
+
+
+``` 
 
 
 ```{r archtypal analysis plots}
@@ -166,9 +350,9 @@ ggplot(cbind(pcaArchs$x,predefArchFour[[1]][,6:8]),aes(x = PC1, y = PC2, color =
 # Create a function for plotting scatterplots with corr 
 
 scatterWrapper <- function(archData,archtypesNames,variableOFInterest,name) {
-    tempDF <- pivot_longer(archData,cols = archtypesNames,names_to = "Archs",values_to = "Value")
+    tempDF <- tidyr::pivot_longer(archData,cols = archtypesNames,names_to = "Archs",values_to = "Value")
     plot <- ggpubr::ggscatter(tempDF,x = "Value", y = variableOFInterest,add = "reg.line",conf.int = T,cor.coef = T) +
-            facet_grid(State~Archs ,scales = "free_x") +
+            facet_grid(~Archs ,scales = "free_x") +
             ggtitle(name) + 
             theme_bw() 
 
@@ -187,13 +371,11 @@ scatterWrapper(dataArchComb,c("P(0.25)","P(0.5)","P(1)","P(Circle)"),"totalDista
 
 scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"RewardEvennes", "Reward Evennes")
 
-
-
 scatterWrapper(dataArchComb,c("Circle","Certainty","Uncertainty","GO"),"meanTimeToChoice", "Mean time to choice")
 
 ggpubr::ggscatter(dataset,x = "NTrials", y = "totalDistance",add = "reg.line",conf.int = T,cor.coef = T)
 
-group_by(duplicated(dataArchComb),State) %>% select(meanTimeToChoice)%>% summarise(mean())
+
 
 reps<- predefFourPlots[["representations"]]
 
@@ -209,8 +391,18 @@ ggplot() +
         guides(color = guide_legend(override.aes = list(label = NULL))) 
 
 
+# Get the column that has the highest value for each row
+MaxArchDF <- predefArchFour[[1]][,1:7] %>%
+            mutate(Archs = apply(predefArchFour[[1]][,1:4],1,function(x) colnames(predefArchFour[[1]][,1:4])[which(x == max(x))]))
 
+MaxCounts <- MaxArchDF %>% group_by(State,Archs) %>% summarise(maxCounts = n())
 
+ggplot(asd,aes(x = Archs, y = n, fill = Archs)) +
+        geom_bar(stat = "identity",position = "dodge") +
+        theme_bw() + 
+        facet_wrap(~State, ncol = 3 ) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        guides(fill = guide_legend(override.aes = list(label = NULL)))
 
 ```
 
@@ -235,4 +427,6 @@ t.test(Uncertainty ~ State,data = dataArchComb[which(dataArchComb$State %in% c("
 t.test(Certainty ~ State,data = dataArchComb[which(dataArchComb$State %in% c("FastedVeh","FastedAlm")),])
 
 
+
+ #### CREATE A LINEAR MODEL TO PREDICT THINGS FROM ARCHTYPAL VALS
 ```

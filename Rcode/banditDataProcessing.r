@@ -54,7 +54,7 @@ loadExcelLocFileGenerateCSV <- function(folder_path) {
 }
 
 
-processLocationData <- function(experiment,attribute) {
+processLocationData <- function(experiment,attribute) { # nolint
 
         telemetryDataframe <- experiment[["LocationData"]]
 
@@ -292,7 +292,7 @@ banditChoice <- function(experiment,attribute,returnStats) {
     A_Prob <- attribute$A_Prob
     B_Prob <- attribute$B_Prob
     C_Prob <- attribute$C_Prob
-    banditChoices <- .banditChoice(experiment[["Choice"]],experiment[["Bandit"]],A_Prob,B_Prob,C_Prob)
+    banditChoices <- .banditChoice(experiment[["Choice"]], experiment[["Bandit"]],A_Prob,B_Prob,C_Prob)
 
     # If first string starts with NA, remove it
     if(str_starts(banditChoices[1],"NA")){
@@ -326,31 +326,39 @@ banditChoice <- function(experiment,attribute,returnStats) {
 
     banditChoiceCount <- banditChoiceCount %>% addPrefix("banditChoiceCount_")
 
-    # Compute the  of the bandit choices
-        # First split the bandit choice three vectors based in bandit
-        which(startsWith(banditChoices,"0.25")) -> inds_025
-        which(startsWith(banditChoices,"0.5")) -> inds_05
-        which(startsWith(banditChoices,"1")) -> inds_1
-
-        # Compute the cramerV lagged for each bandit
-        cramer_025 <- cramersVautoCorr(banditChoices[inds_025],1) %>% addPrefix("cramer_025")
-        cramer_05 <- cramersVautoCorr(banditChoices[inds_05],1) %>% addPrefix("cramer_05")
-        cramer_1 <- cramersVautoCorr(banditChoices[inds_1],1) %>% addPrefix("cramer_1")
-        cramers <- c(cramer_025,cramer_05,cramer_1)
 
     # Compute stats around making the optimal choice
-        # Check if the mouse made the optimal choice for each bandit in the sequence
-        banditOptimalChoiceSeq <- optimalChoice(banditChoices) %>% as.logical()
-        banditChoicesOptimalProb <- sum(banditOptimalChoiceSeq)/length(banditOptimalChoiceSeq) %>% 
-                                    addPrefix("P(optimalChoice)")
-        
-        # Compute the cramerV for optimal choice
-        cramerOptimalChoice <- cramersVautoCorr(as.character(banditOptimalChoiceSeq),1) %>% 
-                                addPrefix("cramerVOptimalChoice")
+    # Check if the mouse made the optimal choice for each bandit in the sequence
+    banditOptimalChoiceSeq <- optimalChoice(banditChoices) %>% as.logical()
+    banditChoicesOptimalProb <- sum(banditOptimalChoiceSeq)/length(banditOptimalChoiceSeq) %>% 
+                                addPrefix("P(optimalChoice)")
+    
+    # Compute the cramerV for optimal choice
+    cramerOptimalChoice <- cramersVautoCorr(as.character(banditOptimalChoiceSeq),1) %>% 
+                            addPrefix("cramerVOptimalChoice")
+    
+    # Compute ngram entropy
+    entropyVec <- c()
+    for(n in 2:7){
+        if(length(banditChoices) < n){
+            ent <- c(NA) %>% addPrefix(paste0("ngramEntropy_",n))
+        } else {
+            temp <- ngram::ngram(paste0(banditChoices,collapse = " "),n = n) %>% 
+                ngram::get.phrasetable()
+            
+            ent <- (sum(temp$prop * log2(temp$prop)) * -1) / log2(length(temp$prop)) %>% addPrefix(paste0("ngramEntropy_",n))
+            if(is.nan(ent)){
+                ent <- c(NA) %>% addPrefix(paste0("ngramEntropy_",n))
+            }
+        }
+
+        entropyVec <- c(entropyVec,ent)
+
+    }
 
     return(c(banditChoiceCount,
             banditChoiceProb,
-            cramers,
+            entropyVec,
             banditChoicesOptimalProb,
             cramerOptimalChoice))
 
@@ -496,7 +504,6 @@ splitExperiment <- function(experiment,attribute,n_splits,Prob) {
 circleStat <- function(experiment,attribute) {
     directionChoices <- biasStats(experiment,attribute,returnDirectionChoiceOnly = TRUE)
 
-    # print(paste0("Computing Circle Stats with ",length(directionChoices)," choices"))
     # Check if the sequence is atleast 3 long else just return na
     if(length(directionChoices) > 2) {
         countCircles <- 0
@@ -557,7 +564,7 @@ mouseSpeed <- function(experiment,attribute) {
 
 rewardAttainment <- function(experiment,attribute) {
     banditChoices <- banditChoice(experiment,attribute,FALSE)
-    #banditChoices <- factor(banditChoices,levels = c("0.25->0.5","0.25->1", "0.5->0.25","0.5->1","1->0.25","1->0.5"))
+
     reward <- as.logical(experiment[["Reward"]])
 
     totalReward <- sum(reward) %>% addPrefix("SumRewardGotten")
@@ -594,6 +601,9 @@ rewardAttainment <- function(experiment,attribute) {
     # Compute the probability of getting a reward after making the optimal choice
     optimalOrNot <- optimalChoice(banditChoices) %>% as.logical()
     rewardProbAfterOptimalChoic <- sum(reward[optimalOrNot])/sum(optimalOrNot) %>% addPrefix("P(Reward|OptimalChoice)")
+    if(is.nan(rewardProbAfterOptimalChoic)){
+        rewardProbAfterOptimalChoic <- c(NA) %>% addPrefix("P(Reward|OptimalChoice)")
+    }
 
     # Comput how evenly the reward is distributed
 
@@ -604,6 +614,9 @@ rewardAttainment <- function(experiment,attribute) {
                     summarise(rewardPerStation = sum(reward))
     
     rewardEveness <- sd(ObsProbRewardSumPerStation$rewardPerStation)/mean(ObsProbRewardSumPerStation$rewardPerStation) %>% addPrefix("RewardEvennes")
+    if(is.nan(rewardEveness)){
+        rewardEveness <- c(NA) %>% addPrefix("RewardEvennes")
+    }
 
     return(c(totalReward,
             rewardProb,
@@ -624,7 +637,7 @@ mouseExpStats <- function(experiment,attribute,inputDataType,verbosey = TRUE){
     # Get number of trials
     numberOfTrails <- length(experiment[["Choice"]]) %>% addPrefix("NTrials")
 
-    if(length(experiment[["Choice"]]) < 3) { return(c(numberOfTrails,rep(NA,51)))}
+    if(length(experiment[["Choice"]]) < 3) { return(c(numberOfTrails,rep(NA,54)))}
 
     # Get bandit choices stats
     banditChoices <- banditChoice(experiment, attribute, TRUE)
@@ -643,7 +656,7 @@ mouseExpStats <- function(experiment,attribute,inputDataType,verbosey = TRUE){
 
     # Compute the movement stats
     if(!is.data.frame(experiment[["LocationData"]])){
-        movementStats <- c(NA,NA,NA,NA,NA, NA) %>% addPrefix("movementStats_")
+        movementStats <- c(NA,NA,NA,NA,NA,NA) %>% addPrefix("movementStats_")
     } else {
         movementStats <- processLocationData(experiment,attribute)
     }
@@ -662,10 +675,13 @@ computeRollingPumpPreference <- function(experiment,attribute,inputDataType){
 
 
 tabulateExperiments <- function(data,datafile,numberOfSplits,telemtryFolder) {
+    dataType = "Action"
     # Create lists for storing the results
     extractedFeaturesDet <- list()
     extractedFeaturesProbDetPart <- list()
     extractedFeaturesProbProbPart <- list()
+    extractedFeaturesRollingProb <- list()
+    extractedFeaturesRollingDet <- list()
     ## Create a nested list for the split probabilistic experiments
     splitExperiments <- list()
     for(i in 1:numberOfSplits) {
@@ -678,132 +694,125 @@ tabulateExperiments <- function(data,datafile,numberOfSplits,telemtryFolder) {
     missExcelCounter <- 0
     missingsTelemetryData <- c()
     colnamesList <- list()
-    # Loop over the data
-    for (mousetype in names(data)) { # WT
+    trajFiles <- list.files(telemtryFolder)
+    sequences <- list()
 
-    for (mouse in names(data[[mousetype]])) { # Mouse
+        # Loop over the data
+        for (mousetype in names(data)) { 
 
-            for (type in names(data[[mousetype]][[mouse]])) { # Det vs prob
+        for (mouse in names(data[[mousetype]])) { 
 
-                for (state in names(data[[mousetype]][[mouse]][[type]])) { # Fasted vs fed
+        for (type in names(data[[mousetype]][[mouse]])) { 
 
-                    for (day in names(data[[mousetype]][[mouse]][[type]][[state]])) { # Day
-                            
-                            dataType = "Action"
-                                # Get the experiment
-                                experiment <- data[[mousetype]][[mouse]][[type]][[state]][[day]][[dataType]]
-                                attribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/",type,"/",state,"/",day,"/",dataType,"/"))
-                                MouseAttribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/"))
+        for (state in names(data[[mousetype]][[mouse]][[type]])) { 
 
-                                # Add on telemetry data from csv files
-                                index_string <- paste0(mouse,"_",state,"_",type,"_",day)
-                                telemFile <- paste0(telemtryFolder,"/",index_string,".csv")
+        for (day in names(data[[mousetype]][[mouse]][[type]][[state]])) { 
 
-                                if(file.exists(telemFile)) {
-                                     experiment[["LocationData"]] <- read.csv(telemFile,check.names = F)
-                                } else {
-                                        print(paste0("No Telemetry data for ",index_string))
-                                        missExcelCounter <- missExcelCounter + 1
-                                        experiment[["LocationData"]] <- NA
-                                        missingsTelemetryData <- c(missingsTelemetryData,index_string)
+            # Get the experiment
+            experiment <- data[[mousetype]][[mouse]][[type]][[state]][[day]][[dataType]]
+            attribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/",type,"/",state,"/",day,"/",dataType,"/"))
+            MouseAttribute <- h5readAttributes(datafile, paste0("/",mousetype,"/",mouse,"/"))
 
-                                }
+            # Add on telemetry data from csv files
+            index_string <- paste0(mouse,"_",state,"_",type,"_",day)
+            which(str_detect(trajFiles,index_string)) -> ind
 
-                                # Check if experment is Det or Prob
-                                if(type == "Det") {
-                                    print("------------------")
-                                    print(paste0("Started processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-                                    # Get the bandit choices, direction choices, and pump choices for all trials
-                                    
-                                    expDetStats <- mouseExpStats(experiment, attribute,"Deterministic Experiment")
-                                    #print("Finished computing experiment stats")
-                                    DetData <-c("MouseType"=mousetype,
-                                                "Mouse"=mouse,
-                                                "Sex" =MouseAttribute$Sex,
-                                                "Type"=type,
-                                                "State"=state,
-                                                "Day"=day,
-                                                expDetStats)
-                                                
-                                    colNamesDet <- names(DetData)
-                                    extractedFeaturesDet[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(DetData)
-                                    detCounter <- detCounter + 1
-                                    #print(str(experiment))
-                                    #print(str(attribute))
-                                    #stop("debug")
+            telemFile <- paste0(telemtryFolder,"/",trajFiles[ind[1]])
+            
+            print("------------------")
+            print(paste0("Started processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
 
+            print(paste0("Looking for telemetry file: ",telemFile))
 
-
-                                } else if (type == "Prob") {
-                                    print("------------------")
-                                    print(paste0("Started processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-                                    # Filter out determenistic part and compute stats for the entire probabilistic part
-                                    expProbDetPart <- filterSeqByTime(experiment,0,attribute$Probabilistic_Switch)
-                                    ProbPartDetStats <- mouseExpStats(expProbDetPart, attribute,"Probabilistic Experiment, Deterministic Part")
-
-                                    expProb <- filterSeqByTime(experiment,
-                                                                attribute$Probabilistic_Switch,
-                                                                attribute$Duration)
-
-                                    ProbPartEntireStats <- mouseExpStats(expProb, attribute,"Probabilistic Experiment, Probabilistic Part")
-
-                                    # Get summary stats for the probabilistic part split into parts n
-                                    ProbPartStatsSplit <- splitExperiment(experiment,attribute,numberOfSplits,TRUE)
-
-                                    ProbDataInfo <- c("MouseType"=mousetype,
-                                                        "Mouse"=mouse,
-                                                        "Sex" =MouseAttribute$Sex,
-                                                        "Type"=type,
-                                                        "State"=state,
-                                                        "Day"=day)
-
-                                    ProbDetPartA <- c(ProbDataInfo,ProbPartDetStats)
-                                    ProbProbPartA <- c(ProbDataInfo,ProbPartEntireStats)
-
-                                    extractedFeaturesProbDetPart[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(ProbDetPartA)
-                                    extractedFeaturesProbProbPart[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(ProbProbPartA)
-
-                                    for(i in 1:numberOfSplits) {
-                                      tempStr <- paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))
-                                      splitExperiments[[i]][[tempStr]] <- unname(c(ProbDataInfo,ProbPartStatsSplit[[i]]))
-                                    }
-                                    probDetCounter <- probDetCounter + 1
-
-                                    ### Debugging
-                                    #print(ProbProbPartA)
-                                    #print(attribute)
-                                    #View(data.frame(experiment[["Bandit"]],
-                                    #                experiment[["Choice"]],
-                                    #                experiment[["Reward"]],
-                                    #                experiment[["Time"]],
-                                    #                c(NA,banditChoice(experiment, attribute, FALSE)),
-                                    #                c(NA,biasStats(experiment, attribute,TRUE))))
-                                    #View(data.frame(expProb[["Bandit"]],
-                                    #                expProb[["Choice"]],
-                                    #                expProb[["Reward"]],
-                                    #                expProb[["Time"]],
-                                    #                c(banditChoice(expProb, attribute, FALSE)),
-                                    #                c(biasStats(expProb, attribute,TRUE))))
-                                    
-
-
-                                }
-                                print(paste0("Finished processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
-                            #dataType = "Lick"
-                            #  exp <- data[[mousetype]][[mouse]][[type]][[state]][[day]][[dataType]]
-                            # Code_Lick <- paste0(exp[["Code_Lick"]],collapse = ",")
-                            # Pump_Lick <- paste0(exp[["Pump_Lick"]],collapse = ",")
-                            # Time_Lick <- paste0(exp[["Time_Lick"]],collapse = ",")
-                        
-                    }
-
-                }
+            if(file.exists(telemFile)) {
+                    experiment[["LocationData"]] <- read.csv(telemFile,check.names = F)
+            } else {
+                    print(paste0("No Telemetry data for ",index_string))
+                    missExcelCounter <- missExcelCounter + 1
+                    experiment[["LocationData"]] <- NA
+                    missingsTelemetryData <- c(missingsTelemetryData,index_string)
 
             }
-        
-    }
 
-    }
+            # Check if experment is Det or Prob
+            if(type == "Det") {
+                
+                # HACK BEWARE
+                1 -> attribute$A_Prob
+                0.5 -> attribute$B_Prob
+                0.25 -> attribute$C_Prob
+
+                expDetStats <- mouseExpStats(experiment, attribute,"Deterministic Experiment")
+                DetData <-c("MouseType"=mousetype,
+                            "Mouse"=mouse,
+                            "Sex" =MouseAttribute$Sex,
+                            "Type"=type,
+                            "State"=state,
+                            "Day"=day,
+                            expDetStats)
+                            
+                colNamesDet <- names(DetData)
+                extractedFeaturesDet[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(DetData)
+                extractedFeaturesRollingDet[[index_string]] <- RollingWindowStats(experiment,attribute, c("MouseType"=mousetype,
+                            "Mouse"=mouse,
+                            "Sex" =MouseAttribute$Sex,
+                            "Type"=type,
+                            "State"=state,
+                            "Day"=day), 300, 150)
+
+                detCounter <- detCounter + 1
+
+            } else if (type == "Prob") {
+
+                # Filter out determenistic part and compute stats for the entire probabilistic part
+                expProbDetPart <- filterSeqByTime(experiment,0,attribute$Probabilistic_Switch)
+                ProbPartDetStats <- mouseExpStats(expProbDetPart, attribute,"Probabilistic Experiment, Deterministic Part")
+
+                expProb <- filterSeqByTime(experiment,
+                                            attribute$Probabilistic_Switch,
+                                            attribute$Duration)
+
+                ProbPartEntireStats <- mouseExpStats(expProb, attribute,"Probabilistic Experiment, Probabilistic Part")
+
+                # Get summary stats for the probabilistic part split into parts n
+                ProbPartStatsSplit <- splitExperiment(experiment,attribute,numberOfSplits,TRUE)
+
+                ProbDataInfo <- c("MouseType"=mousetype,
+                                    "Mouse"=mouse,
+                                    "Sex" =MouseAttribute$Sex,
+                                    "Type"=type,
+                                    "State"=state,
+                                    "Day"=day)
+
+                ProbDetPartA <- c(ProbDataInfo,ProbPartDetStats)
+                ProbProbPartA <- c(ProbDataInfo,ProbPartEntireStats)
+
+                extractedFeaturesProbDetPart[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(ProbDetPartA)
+                extractedFeaturesProbProbPart[[paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))]] <- unname(ProbProbPartA)
+
+                for(i in 1:numberOfSplits) {
+                    tempStr <- paste0(mousetype,"_",day,"_",state,dataType,type,runif(1))
+                    splitExperiments[[i]][[tempStr]] <- unname(c(ProbDataInfo,ProbPartStatsSplit[[i]]))
+                }
+
+                extractedFeaturesRollingProb[[index_string]] <- RollingWindowStats(experiment,attribute, ProbDataInfo, 300, 150)
+
+                probDetCounter <- probDetCounter + 1
+                
+
+            }
+            print(paste0("Finished processing ",mousetype," ",mouse," ",type," ",state," ",day," ",length(experiment[["Bandit"]])))
+
+            
+        }
+
+        }
+
+        }
+            
+        }
+
+        }
 
 
     # Convert the lists to dataframes and add column names
@@ -838,8 +847,77 @@ tabulateExperiments <- function(data,datafile,numberOfSplits,telemtryFolder) {
                 "ProbExperimentsDetPart" = extractedFeaturesProbDetPartDF,
                 "ProbExperimentsProbPart" = extractedFeaturesProbProbPartDF,
                 "SplitProbExperiments" = splitExperimentsDF,
-                "MissingTelemetryData" = missingsTelemetryData))
+                "MissingTelemetryData" = missingsTelemetryData,
+                "RollingProbExperiments" = extractedFeaturesRollingProb,
+                "RollingDetExperiments" = extractedFeaturesRollingDet))
                 
 
     
+}
+
+
+RollingWindowStats <- function(experiment, attribute, attdata ,windowLength, overlap,Prob) {
+
+    #if(attdata["Type"] == "Prob") {start <- 300} else {start <- 0}
+    start <- 0
+    # Generate the indices for the windows
+    windowStarts <- seq(start,attribute$Duration-windowLength,windowLength-overlap)
+    windowEnds <- windowStarts + windowLength
+
+    # Create a list for storing the results
+    res <- list()
+    gotit <- FALSE
+
+    for( i in 1:length(windowStarts) ) {s
+        expTemp <- filterSeqByTime(experiment,windowStarts[i],windowEnds[i])
+        temp <- c(attdata,mouseExpStats(expTemp, attribute,
+                paste0("t_",windowStarts[i],"_",windowEnds[i])))
+        if(!gotit & sum(is.na(temp)) < 2) {colnames <- names(temp)}
+        res[[paste0("t_",windowStarts[i],"_",windowEnds[i])]] <- c(paste0("t_",windowStarts[i],"_",windowEnds[i]),unname(temp))
+    }
+
+    res <- do.call(rbind.data.frame, res) %>% readr::type_convert()
+    colnames(res) <- c("Range",colnames)
+
+    return(res)
+
+}
+
+
+gatherExperimentsRolling <- function(ListOfDataframes,variablesOfInterest) {
+        # Hacky way to get the correct column names (hacks on hacks on hacks)
+        nameVec <- (NA)
+        i <- 1
+        while(any(is.na(nameVec))) {
+                nameVec <- names(ListOfDataframes[[i]])
+                i <- i + 1
+        }
+
+        # Process the data frames, rename columns and interpolate
+        for(i in 1:length(ListOfDataframes)) {
+                # Rename the columns
+                colnames(ListOfDataframes[[i]]) <- nameVec
+
+                # Interpolate the data missing data by taking the previous non na value
+                ListOfDataframes[[i]] <- ListOfDataframes[[i]] %>%
+                        mutate_at(vars(variablesOfInterest),~zoo::na.approx(.,na.rm = FALSE))
+
+                # Remove all rows that have any na values for the variables of interest
+                ListOfDataframes[[i]] <- ListOfDataframes[[i]] %>%
+                        filter_at(vars(variablesOfInterest),all_vars(!is.na(.)))
+
+
+         }
+
+       temp <- do.call(rbind.data.frame, ListOfDataframes)
+
+        colnames(temp) <- nameVec
+
+        temp <- temp %>% 
+                mutate(TimeRange = str_remove(Range,"t_")) %>%
+                tidyr::separate(TimeRange,c("Start","End"),sep = "_",remove = TRUE) %>%
+                mutate(MidTimePoint = (as.numeric(Start) + as.numeric(End))/2) 
+
+       return(select(temp,all_of(c("Range","MidTimePoint","MouseType","Mouse","Sex","State","Day","NTrials",variablesOfInterest))))
+
 }
