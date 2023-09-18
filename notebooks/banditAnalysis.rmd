@@ -175,74 +175,159 @@ RollingEstimatesDataFrame <- gatherExperimentsRolling(experimentData[["RollingPr
 # Plot line graphs of the rolling estimate of P(1) with ggplot
 avargedData <- RollingEstimatesDataFrame %>%
                 group_by(MidTimePoint,Mouse,State,MouseType,Sex) %>%
-                summarise_if(is.numeric,mean) %>% ungroup()
-
-avargedData <- mutate(avargedData, State = ifelse(MouseType == "DTR+", paste0(State,"DTRplus"), State)) %>%
+                summarise_if(is.numeric,mean) %>% ungroup() %>%
+                mutate(State = ifelse(MouseType == "DTR+", paste0(State,"DTRplus"), State)) %>%
                 filter(MouseType != "GCAMP") %>%
-                filter(MidTimePoint > 400)
-
-filter(RollingEstimatesDataFrame,State == "FastedVeh") %>%
-ggplot(aes(x = MidTimePoint, y = `P(1)`, color = Day)) +
-        geom_line(alpha = 0.7) +
-        geom_smooth(data = avargedData,
-                        aes(x = MidTimePoint, y = `P(1)`),
-                        alpha=0.4,
-                        color = "#ff0000",
-                        method = "lm",
-                        linetype="dashed"
-                        ) +
-        theme_classic() + 
-        facet_wrap(~Mouse, ncol = 4) +
-        guides(color = "none")
-
-ggplot(avargedData) +
-        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
-                        alpha=0.4,
-                        method = "lm",
-                        se = FALSE,
-                        linetype="dotted"
-                        ) +
-        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
-                        alpha=0.4,
-                        method = "loess",
-                        se = FALSE,
-                        ) +
-        theme_classic() + 
-        xlab("Time (s)") +
-        guides(color = "none")
-
-####################
+                filter(MidTimePoint > 400) %>%
+                mutate(Mouse = as.character(Mouse)) %>%
+                as.data.frame()
 
 getpval <- function (modelobject) {
-        if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
-        f <- summary(modelobject)$fstatistic
+        f <- modelobject$fstatistic
         p <- pf(f[1],f[2],f[3],lower.tail=F)
         attributes(p) <- NULL
         return(p)
 }
 
-plotDifferencesTimeProgressionComparison <- function(avargedData,comparisonVec,varibleToCompare) {
+plotDifferencesTimeProgressionComparison <- function(avargedData,comparisonVec,varibleToCompare,timesegments=1) {
 
                 datas <- filter(avargedData, State %in% comparisonVec)
                 datas$State <- factor(datas$State,levels = comparisonVec)
-                datas$Mouse <- as.character(datas$Mouse)
-                datas <- datas %>% mutate(TimeSegment = cut(MidTimePoint, breaks = 3))
 
-                datasFirst <- filter(datas, State == comparisonVec[1])	
-                datasSecond <- filter(datas, State == comparisonVec[2])
+                if(timesegments == 1) {
+                        datas <- datas %>% mutate(TimeSegment = "Entire Probabilistic Phase") %>%
+                                mutate(Duped = FALSE)
+                } else {
+                        datas <- datas %>%
+                                mutate(TimeSegment = cut(MidTimePoint, breaks = timesegments,label = FALSE)) %>%
+                                mutate(Duped = FALSE)
 
-                forumlaString <- paste0("`",varibleToCompare,"`", "~ MidTimePoint + State")
-                
-                comblmnosum <- lm(forumlaString,datas)
-                comblm <-summary(comblmnosum)
+                        # Sort the data frame by the val column
+                        for(i in 2:timesegments) {
+                                for(mouse in unique(datas$Mouse)) {
+                                        for(state in unique(datas$State)) {
+                                                temp <- filter(datas, Mouse == mouse & State == state & TimeSegment == i)
+                                                addrow <- temp[which.min(temp$MidTimePoint),]
+                                                addrow$TimeSegment <- i-1
+                                                addrow$Duped <- TRUE
+                                                datas <- rbind(datas,addrow)
+                                        }
+                                }
+                        }
+                }
+
 
                 forumlaStringNoState <- paste0("`",varibleToCompare,"`", "~ MidTimePoint")
-                firstStatelm <- lm(forumlaStringNoState,datasFirst)
-                secondStatelm <- lm(forumlaStringNoState,datasSecond)
+                forumlaString <- paste0("`",varibleToCompare,"`", "~ MidTimePoint + State")
+                forumlaStringWInteraction <- paste0("`",varibleToCompare,"`", "~ MidTimePoint + State + MidTimePoint:State")
+                forumlaStringOnlyInteraction <- paste0("`",varibleToCompare,"`", "~ MidTimePoint + MidTimePoint:State")
+        
+
+                lmCoeffsDF <- data.frame(rowNames = c("Intercept ",
+                                        "Time",
+                                        "State",
+                                        "Model (R^2)",
+                                        "Intercept",
+                                        "Time",
+                                        "State",
+                                        "Time:State",
+                                        "Model (R^2)",
+                                        "Intercept",
+                                        "Time",
+                                        "Time:State", 
+                                        "Model (R^2)"))
+
+                if(timesegments == 1) {
+                        newStrings <- c("Entire Probabilistic Phase")
+                } else {
+                        ditt <- cut(datas$MidTimePoint,timesegments,dig.lab=5) %>%
+                                                levels() %>%
+                                                str_remove_all("\\(|\\)|\\]|\\[") %>%
+                                                str_split( ",") %>%
+                                                unlist() %>%
+                                                as.numeric() %>%
+                                                round(-1) 
+                        newStrings <- c()
+                        
+                        for(i in 1:timesegments) {
+                                symb <- ifelse(i == 1,"[","(")
+                                newStrings <- c(newStrings,paste0(symb,ditt[(2*i)-1],",",ditt[2*(i)],"]"))
+                        }
+  
+                }
+                
+                lmCompare <- list()
+
+                for(slice in unique(datas$TimeSegment)) {
+                        if(timesegments == 1) {
+                                datasSlice <- filter(datas,Duped == FALSE)
+                        } else {
+                                datasSlice <- filter(datas, TimeSegment == slice)
+                        }
+
+                        datasFirst <- filter(datasSlice, State == comparisonVec[1])	
+                        datasSecond <- filter(datasSlice, State == comparisonVec[2])
+                        
+                        firstStatelm <- lm(forumlaStringNoState,datasFirst)
+                        secondStatelm <- lm(forumlaStringNoState,datasSecond)
+
+                        differenceInIntercepts <- coef(secondStatelm)[1] - coef(firstStatelm)[1]
+                        ratioOfCoeffcients <- coef(secondStatelm)[2]/coef(firstStatelm)[2]
+
+                        lmCompare[[slice]] <- list(differenceInIntercepts,ratioOfCoeffcients)
+
+                        comblm <-summary(lm(forumlaString,datasSlice))
+                        comblmWInteraction <-summary(lm(forumlaStringWInteraction,datasSlice))
+                        comblmOnlyInteraction <-summary(lm(forumlaStringOnlyInteraction,datasSlice))
+
+                        lmCoeffsDF <- cbind(lmCoeffsDF,data.frame("Coefficients" = c(
+                                        comblm$coefficients[,1],
+                                        comblm$adj.r.squared,
+                                        comblmWInteraction$coefficients[,1],
+                                        comblmWInteraction$adj.r.squared,
+                                        comblmOnlyInteraction$coefficients[,1],
+                                        comblmOnlyInteraction$adj.r.squared
+                                        ),
+                                        "P-Value" = c(
+                                        comblm$coefficients[,4],
+                                        getpval(comblm),
+                                        comblmWInteraction$coefficients[,4],
+                                        getpval(comblmWInteraction),
+                                        comblmOnlyInteraction$coefficients[,4],
+                                        getpval(comblmOnlyInteraction)
+                                        )))
+
+                }
+                
+                colnames(lmCoeffsDF) <- 1:ncol(lmCoeffsDF)
+                 
+                colGroups <- c(1,rep(2,timesegments))
+                colGroups <- setNames(colGroups, c(" ",newStrings))
+
+                table <- lmCoeffsDF %>% dplyr::mutate_if(is.numeric, funs(as.character(signif(., 3)))) %>%
+                kableExtra::kbl(
+                                col.names = c(" ",rep(c("Coefficient","P-Value"),timesegments))) %>% 
+                        kableExtra::pack_rows(paste0(varibleToCompare, " ~ Time + State"), 1, 4) %>%
+                        kableExtra::pack_rows(paste0(varibleToCompare, " ~ Time + State + Time:State"), 5,9) %>%
+                        kableExtra::pack_rows(paste0(varibleToCompare, " ~ Time + Time:State"), 10, 13) %>%
+                        kableExtra::add_header_above(colGroups) %>%
+                        kableExtra::add_header_above(c(" "=1,"Time Intervals (s)" = length(colnames(lmCoeffsDF))-1)) %>%
+                        kableExtra::column_spec(1, bold = T, border_right = T) %>%
+                        kableExtra::row_spec(c(4,9,13), underline = T) %>%
+                        kableExtra::kable_classic_2(c("striped","condensed"),full_width = F)
 
 
-                ratioOfCoeffcients <- coef(secondStatelm)[2]/coef(firstStatelm)[2]
+                
+                
 
+                subtitleString <- c()
+                for(i in 1:length(lmCompare)) {
+                        subtitleString <- c(subtitleString,
+                                             "Segment: ",newStrings[i],"\n",
+                                             "    Difference in intercept = ",signif(lmCompare[[i]][[1]],3), "\n",
+                                             "    Ratio of Slopes               = ",signif(lmCompare[[i]][[2]],3), "\n")
+                }
+                subtitleString <- paste0(subtitleString,collapse = "")
 
                 p <- ggplot() +
                 geom_line(data = datas,
@@ -273,26 +358,20 @@ plotDifferencesTimeProgressionComparison <- function(avargedData,comparisonVec,v
                 theme_bw() + 
                 facet_wrap(~State, ncol = 2) +
                 ggpubr::stat_regline_equation(data = datas,
-                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"))) + 
+                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"),group="TimeSegment")) + 
                 ggpubr::stat_cor(data = datas,
-                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`")),label.x.npc = "middle") + 
+                                                mapping = aes_string(x = "MidTimePoint", y = paste0("`",varibleToCompare,"`"),group="TimeSegment"),label.x.npc = "middle") + 
                 xlab("Time (s)") +
                 guides(color = "none") + 
                 ggtitle(paste0(varibleToCompare, " : ", comparisonVec[1]," vs. ",comparisonVec[2]),
-                        subtitle = paste0("Significance P-value of Linear Model     = ",formatC(getpval(comblmnosum), format = "e", digits = 3),"     (",varibleToCompare," ~ Time + State )",
-                                        "\nSignificance P-value of Time Coefficent  = ", formatC(comblm$coefficients[2,4], format = "e", digits = 3),
-                                        "\nSignificance P-value of State Coefficent = ", formatC(comblm$coefficients[3,4], format = "e", digits = 3),
-                                        "\nRatio of Slopes: ",abs(round(ratioOfCoeffcients,3))))
+                        subtitle = subtitleString)
                 return(p)
 
-ggsave("file.png",p,width = 10,height = 7)
+
 
 }
 
 plotFolder <- "plots/ComaparingStatesWithArchs"
-
-avargedData <- as.data.frame(avargedData)
-avargedData$Mouse <- as.character(avargedData$Mouse)
 
 timerSeriesArch <- ArchAnalysisWithPredefined(archMat4,avargedData,"TimeSeriesDataFourArchs",FeaturesOfIntrest,contrastList,TRUE)
 
@@ -320,10 +399,9 @@ contrastList <- list(   c("Fasted", "FastedVeh"),
 
 
 
-
 for(i in 1:length(featuresToCompare)) {
         for(j in 1:length(contrastList)) {
-                a <- plotDifferencesTimeProgressionComparison(avargedDataWarchalphas,contrastList[[j]],featuresToCompare[i])
+                a <- plotDifferencesTimeProgressionComparison(avargedDataWarchalphas,contrastList[[j]],featuresToCompare[i],1)
                 ggsave(paste0(plotFolder,"/",featuresToCompare[i],"_",contrastList[[j]][1],"_",contrastList[[j]][2],".png"),a,width = 10,height = 7)
         }
 }
@@ -430,3 +508,37 @@ t.test(Certainty ~ State,data = dataArchComb[which(dataArchComb$State %in% c("Fa
 
  #### CREATE A LINEAR MODEL TO PREDICT THINGS FROM ARCHTYPAL VALS
 ```
+
+
+
+filter(RollingEstimatesDataFrame,State == "FastedVeh") %>%
+ggplot(aes(x = MidTimePoint, y = `P(1)`, color = Day)) +
+        geom_line(alpha = 0.7) +
+        geom_smooth(data = avargedData,
+                        aes(x = MidTimePoint, y = `P(1)`),
+                        alpha=0.4,
+                        color = "#ff0000",
+                        method = "lm",
+                        linetype="dashed"
+                        ) +
+        theme_classic() + 
+        facet_wrap(~Mouse, ncol = 4) +
+        guides(color = "none")
+
+ggplot(avargedData) +
+        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
+                        alpha=0.4,
+                        method = "lm",
+                        se = FALSE,
+                        linetype="dotted"
+                        ) +
+        geom_smooth(aes(x = MidTimePoint, y = `P(1)`,color = as.character(Mouse),alpha=0.3),
+                        alpha=0.4,
+                        method = "loess",
+                        se = FALSE,
+                        ) +
+        theme_classic() + 
+        xlab("Time (s)") +
+        guides(color = "none")
+
+####################
